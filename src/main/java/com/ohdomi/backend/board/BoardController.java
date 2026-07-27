@@ -113,8 +113,10 @@ public class BoardController {
         BoardPostResponse post = find(postId);
         if (!post.boardType().equals("INQUIRY")) throw new IllegalArgumentException("Only an inquiry can be answered");
         jdbc.update("""
-                MERGE INTO board_answers (post_id, author_user_id, content, created_at, updated_at) KEY(post_id)
+                INSERT INTO board_answers (post_id, author_user_id, content, created_at, updated_at)
                 VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON DUPLICATE KEY UPDATE author_user_id = VALUES(author_user_id),
+                                        content = VALUES(content), updated_at = CURRENT_TIMESTAMP
                 """, postId, request.authorUserId(), request.content());
         jdbc.update("UPDATE board_posts SET status = 'ANSWERED', updated_at = CURRENT_TIMESTAMP WHERE post_id = ?", postId);
         return find(postId);

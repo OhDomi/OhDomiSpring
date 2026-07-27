@@ -1,13 +1,15 @@
 spring:
+  config:
+    import: optional:file:.env[.properties]
+
   application:
     name: backend
 
   datasource:
-    # File-backed in development so data survives application restarts.
-    url: ${SPRING_DATASOURCE_URL:jdbc:h2:file:./data/ohdomi;AUTO_SERVER=TRUE}
-    driver-class-name: org.h2.Driver
-    username: ${SPRING_DATASOURCE_USERNAME:sa}
-    password: ${SPRING_DATASOURCE_PASSWORD:}
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://127.0.0.1:3306/ohdomi?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Seoul}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:}
 
   sql:
     init:
@@ -22,11 +24,6 @@ spring:
     properties:
       hibernate:
         format_sql: true
-
-  h2:
-    console:
-      enabled: true
-      path: /h2-console
 
 server:
   error:

@@ -17,6 +17,16 @@ public class ApiExceptionHandler {
         return response(HttpStatus.NOT_FOUND, exception.getMessage());
     }
 
+    @ExceptionHandler(ConflictException.class)
+    ResponseEntity<Map<String, Object>> conflict(ConflictException exception) {
+        return response(HttpStatus.CONFLICT, exception.getMessage());
+    }
+
+    @ExceptionHandler(UnauthorizedException.class)
+    ResponseEntity<Map<String, Object>> unauthorized(UnauthorizedException exception) {
+        return response(HttpStatus.UNAUTHORIZED, exception.getMessage());
+    }
+
     @ExceptionHandler({IllegalArgumentException.class, MethodArgumentNotValidException.class})
     ResponseEntity<Map<String, Object>> badRequest(Exception exception) {
         return response(HttpStatus.BAD_REQUEST, exception.getMessage());

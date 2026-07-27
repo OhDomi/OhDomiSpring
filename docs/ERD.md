@@ -191,6 +191,8 @@ erDiagram
 
 | Method | Path | Purpose |
 |---|---|---|
+| POST | `/api/auth/login` | Verify login ID, password hash, active status, and selected role |
+| POST | `/api/auth/register` | Register a new owner account with a salted PBKDF2-SHA256 password hash |
 | GET | `/api/stores` | Store and owner list |
 | GET | `/api/stores/{storeId}` | Store profile |
 | GET | `/api/stores/{storeId}/staff?date=YYYY-MM-DD` | Daily staff shifts |
@@ -208,4 +210,4 @@ erDiagram
 | PATCH | `/api/board/posts/{postId}/pin` | Toggle pinned status |
 | POST | `/api/board/posts/{postId}/answer` | Admin answer to inquiry |
 
-The development database is stored at `./data/ohdomi.mv.db`. Delete that file only when an intentional local reset is required. Tests use an isolated in-memory H2 database.
+The application connects to MySQL at `127.0.0.1:3306` by default. Configure `MYSQL_USER` and `MYSQL_PASSWORD`, or override the complete JDBC URL with `SPRING_DATASOURCE_URL`. The `ohdomi` database is created automatically when the configured account has `CREATE` permission. Tests use an isolated H2 database in MySQL compatibility mode.
