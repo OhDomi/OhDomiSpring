@@ -1,14 +1,29 @@
 package com.ohdomi.backend.hygiene;
 
+import java.sql.PreparedStatement;
 import java.time.LocalDateTime;
 import java.util.List;
 
 import com.ohdomi.backend.global.ResourceNotFoundException;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -53,7 +68,71 @@ public class HygieneController {
                 rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getString(5),
                 rs.getTimestamp(6) == null ? null : rs.getTimestamp(6).toLocalDateTime(),
                 rs.getTimestamp(7) == null ? null : rs.getTimestamp(7).toLocalDateTime()), inspectionId);
-        return new InspectionDetailResponse(inspection, results, tasks);
+        List<HygieneImageResponse> images = jdbc.query("""
+                SELECT image_id, image_url, category, analysis_result, uploaded_at
+                FROM hygiene_images WHERE inspection_id = ? ORDER BY image_id
+                """, (rs, row) -> new HygieneImageResponse(
+                rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4),
+                rs.getTimestamp(5).toLocalDateTime()), inspectionId);
+        return new InspectionDetailResponse(inspection, results, images, tasks);
+    }
+
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    @Transactional
+    public InspectionDetailResponse createInspection(@Valid @RequestBody CreateInspectionRequest request) {
+        requireStore(request.storeId());
+        KeyHolder keys = new GeneratedKeyHolder();
+        jdbc.update(connection -> {
+            PreparedStatement statement = connection.prepareStatement("""
+                    INSERT INTO hygiene_inspections
+                      (store_id, score, status, reviewer, summary, inspected_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """, new String[]{"inspection_id"});
+            statement.setLong(1, request.storeId());
+            statement.setInt(2, request.score());
+            statement.setString(3, request.status().toUpperCase());
+            statement.setString(4, request.reviewer().trim());
+            statement.setString(5, request.summary());
+            statement.setObject(6, request.inspectedAt());
+            return statement;
+        }, keys);
+        Number generatedId = keys.getKey();
+        if (generatedId == null) throw new IllegalStateException("Database did not return an inspection id");
+        long inspectionId = generatedId.longValue();
+
+        values(request.checkResults()).forEach(result -> jdbc.update("""
+                INSERT INTO hygiene_check_results
+                  (inspection_id, item_name, score, status, memo)
+                VALUES (?, ?, ?, ?, ?)
+                """, inspectionId, result.itemName().trim(), result.score(),
+                result.status().toUpperCase(), result.memo()));
+        values(request.images()).forEach(image -> jdbc.update("""
+                INSERT INTO hygiene_images
+                  (inspection_id, image_url, category, analysis_result, uploaded_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, inspectionId, image.imageUrl().trim(), image.category().toUpperCase(),
+                image.analysisResult()));
+        values(request.improvementTasks()).forEach(task -> jdbc.update("""
+                INSERT INTO improvement_tasks
+                  (inspection_id, title, description, priority, status, due_at, completed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, inspectionId, task.title().trim(), task.description().trim(),
+                task.priority().toUpperCase(), task.status().toUpperCase(),
+                task.dueAt(), task.completedAt()));
+        return inspection(inspectionId);
+    }
+
+    private void requireStore(long storeId) {
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM stores WHERE store_id = ?",
+                Integer.class, storeId);
+        if (count == null || count == 0) {
+            throw new ResourceNotFoundException("Store " + storeId + " was not found");
+        }
+    }
+
+    private static <T> List<T> values(List<T> items) {
+        return items == null ? List.of() : items;
     }
 
     public record InspectionResponse(long inspectionId, long storeId, String storeName, int score,
@@ -64,7 +143,40 @@ public class HygieneController {
     public record ImprovementTaskResponse(long improvementTaskId, String title, String description,
                                           String priority, String status, LocalDateTime dueAt,
                                           LocalDateTime completedAt) {}
+    public record HygieneImageResponse(long imageId, String imageUrl, String category,
+                                       String analysisResult, LocalDateTime uploadedAt) {}
     public record InspectionDetailResponse(InspectionResponse inspection,
                                            List<CheckResultResponse> checkResults,
+                                           List<HygieneImageResponse> images,
                                            List<ImprovementTaskResponse> improvementTasks) {}
+
+    public record CreateInspectionRequest(
+            @NotNull @Positive Long storeId,
+            @Min(0) @Max(100) int score,
+            @NotBlank @Size(max = 30) String status,
+            @NotBlank @Size(max = 100) String reviewer,
+            @Size(max = 1000) String summary,
+            @NotNull LocalDateTime inspectedAt,
+            List<@Valid CheckResultRequest> checkResults,
+            List<@Valid HygieneImageRequest> images,
+            List<@Valid ImprovementTaskRequest> improvementTasks) {}
+
+    public record CheckResultRequest(
+            @NotBlank @Size(max = 100) String itemName,
+            @Min(0) @Max(100) int score,
+            @NotBlank @Size(max = 30) String status,
+            @Size(max = 500) String memo) {}
+
+    public record HygieneImageRequest(
+            @NotBlank @Size(max = 1000) String imageUrl,
+            @NotBlank @Size(max = 50) String category,
+            @Size(max = 1000) String analysisResult) {}
+
+    public record ImprovementTaskRequest(
+            @NotBlank @Size(max = 200) String title,
+            @NotBlank @Size(max = 1000) String description,
+            @NotBlank @Size(max = 20) String priority,
+            @NotBlank @Size(max = 30) String status,
+            LocalDateTime dueAt,
+            LocalDateTime completedAt) {}
 }

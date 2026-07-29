@@ -194,16 +194,28 @@ erDiagram
 | POST | `/api/auth/login` | Verify login ID, password hash, active status, and selected role |
 | POST | `/api/auth/register` | Register a new owner account with a salted PBKDF2-SHA256 password hash |
 | GET | `/api/stores` | Store and owner list |
+| POST | `/api/stores` | Create a store |
 | GET | `/api/stores/{storeId}` | Store profile |
+| PUT | `/api/stores/{storeId}` | Replace a store profile |
 | GET | `/api/stores/{storeId}/staff?date=YYYY-MM-DD` | Daily staff shifts |
+| POST | `/api/stores/{storeId}/staff` | Upload a staff shift |
 | GET | `/api/stores/{storeId}/facilities` | Latest facility checks |
+| POST | `/api/stores/{storeId}/facilities` | Create a facility |
+| POST | `/api/stores/{storeId}/facilities/{facilityId}/checks` | Upload a facility check |
 | GET | `/api/stores/{storeId}/sales-summary?from=YYYY-MM-DD&to=YYYY-MM-DD` | Sales aggregate |
 | GET | `/api/stores/{storeId}/inventory` | Current inventory |
+| POST | `/api/stores/{storeId}/inventory` | Create an inventory item |
+| PUT | `/api/stores/{storeId}/inventory/{inventoryItemId}` | Replace an inventory item |
+| POST | `/api/stores/{storeId}/customer-orders` | Upload a customer order and items |
 | GET | `/api/stores/{storeId}/order-recommendations?date=YYYY-MM-DD` | AI order recommendations |
+| POST | `/api/stores/{storeId}/order-recommendations` | Upload an order recommendation |
 | GET | `/api/stores/{storeId}/purchase-orders` | Purchase-order history |
+| POST | `/api/stores/{storeId}/purchase-orders` | Upload a purchase order and items |
 | GET | `/api/hygiene-inspections?storeId={storeId}` | Inspection history |
-| GET | `/api/hygiene-inspections/{inspectionId}` | Inspection results and tasks |
+| POST | `/api/hygiene-inspections` | Upload an inspection, results, images, and tasks |
+| GET | `/api/hygiene-inspections/{inspectionId}` | Inspection results, images, and tasks |
 | GET | `/api/risk-assessments/latest?level=HIGH` | Latest risk per store |
+| POST | `/api/risk-assessments` | Upload a store risk assessment |
 | GET | `/api/board/posts?boardType=NOTICE` | Board listing |
 | GET | `/api/board/posts/{postId}` | Detail and view-count increment |
 | POST | `/api/board/posts` | Create a post |
