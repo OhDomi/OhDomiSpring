@@ -15,3 +15,6 @@ spring:
   h2:
     console:
       enabled: false
+
+hygiene-ai:
+  base-url: http://127.0.0.1:8000

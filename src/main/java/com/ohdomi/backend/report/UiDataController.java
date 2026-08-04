@@ -330,10 +330,10 @@ public class UiDataController {
         return value == null ? "-" : value.toString();
     }
     private static String dateTime(Timestamp value) { return value == null ? "-" : value.toLocalDateTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")); }
-    private static String statusKo(String value) { return switch (value == null ? "" : value) { case "NORMAL" -> "정상"; case "WARNING" -> "주의"; default -> "점검 필요"; }; }
+    private static String statusKo(String value) { return switch (value == null ? "" : value) { case "NORMAL" -> "정상"; case "WARNING" -> "주의"; case "URGENT" -> "긴급"; case "REVIEW" -> "검토 필요"; default -> "점검 필요"; }; }
     private static String inspectionStatusKo(String value) { return switch (value) { case "GOOD" -> "양호"; case "URGENT" -> "긴급"; default -> "주의"; }; }
     private static String staffStatusKo(String value) { return switch (value) { case "CHECKED_IN" -> "출근 완료"; case "WORKING" -> "근무 중"; default -> "근무 예정"; }; }
-    private static String priorityKo(String value) { return "WARNING".equals(value) ? "주의" : "확인"; }
+    private static String priorityKo(String value) { return switch (value == null ? "" : value) { case "URGENT" -> "긴급"; case "WARNING" -> "주의"; default -> "확인"; }; }
     private static String riskKo(String value) { return switch (value) { case "SHORTAGE" -> "부족"; case "WARNING" -> "주의"; default -> "안전"; }; }
     private static String riskLevelKo(String value) { return switch (value) { case "HIGH" -> "높음"; case "WARNING" -> "주의"; default -> "안전"; }; }
     private static String orderStatusKo(String value) { return switch (value) { case "DRAFT" -> "작성중"; case "SHIPPING" -> "배송중"; case "RECEIVED" -> "입고완료"; default -> value; }; }

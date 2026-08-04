@@ -3,6 +3,7 @@ package com.ohdomi.backend.global;
 import java.time.Instant;
 import java.util.Map;
 
+import com.ohdomi.backend.hygiene.HygieneAiException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -30,6 +31,11 @@ public class ApiExceptionHandler {
     @ExceptionHandler({IllegalArgumentException.class, MethodArgumentNotValidException.class})
     ResponseEntity<Map<String, Object>> badRequest(Exception exception) {
         return response(HttpStatus.BAD_REQUEST, exception.getMessage());
+    }
+
+    @ExceptionHandler(HygieneAiException.class)
+    ResponseEntity<Map<String, Object>> hygieneAiUnavailable(HygieneAiException exception) {
+        return response(HttpStatus.BAD_GATEWAY, exception.getMessage());
     }
 
     private ResponseEntity<Map<String, Object>> response(HttpStatus status, String message) {

@@ -37,6 +37,9 @@ All request and response bodies use JSON. Dates use `YYYY-MM-DD`, times use
 | `POST` | `/api/stores/{storeId}/purchase-orders` | Upload a purchase order and its items |
 | `GET` | `/api/hygiene-inspections` | List hygiene inspections |
 | `POST` | `/api/hygiene-inspections` | Upload an inspection and its related information |
+| `GET` | `/api/hygiene-inspections/check-items` | List Hygiene AI checklist items |
+| `POST` | `/api/hygiene-inspections/analyze` | Analyze and persist an uploaded image |
+| `GET` | `/api/hygiene-inspections/images/{imageId}` | Stream a stored inspection image |
 | `GET` | `/api/hygiene-inspections/{inspectionId}` | Get inspection details |
 | `GET` | `/api/risk-assessments/latest` | Get the latest store risk assessments |
 | `POST` | `/api/risk-assessments` | Upload a store risk assessment |
@@ -403,6 +406,23 @@ Returns `409 Conflict` when `orderNumber` already exists.
 
 ## Hygiene inspections
 
+Set `HYGIENE_AI_BASE_URL` to the FastAPI service base URL. It defaults to
+`http://127.0.0.1:8000`.
+
+### `POST /api/hygiene-inspections/analyze`
+
+Accepts `multipart/form-data` with `storeId`, `itemId`, optional `retakeCount`, and
+an `image` file. JPG, PNG, and WebP files up to 10MB are accepted. Spring sends the
+file to Hygiene AI, then saves the inspection, item result, improvement action,
+and original image bytes in one database transaction.
+
+The response contains `inspection` (the persisted inspection detail) and
+`aiResult` (the structured model response). Valid item IDs are available from
+`GET /api/hygiene-inspections/check-items`.
+
+Stored image bytes can be read from the `imageUrl` returned in each image record,
+which points to `GET /api/hygiene-inspections/images/{imageId}`.
+
 ### `GET /api/hygiene-inspections`
 
 Lists inspections, newest first.
@@ -452,8 +472,9 @@ imageId, imageUrl, category, analysisResult, uploadedAt
 ### `POST /api/hygiene-inspections`
 
 Uploads a complete hygiene inspection in one transaction and returns `201 Created`.
-The `checkResults`, `images`, and `improvementTasks` arrays are optional. Image
-binary storage is external; `imageUrl` points to the uploaded image.
+The `checkResults`, `images`, and `improvementTasks` arrays are optional. This
+legacy JSON endpoint stores image metadata only. Images submitted through the AI
+analysis endpoint are stored as database binary content.
 
 ```json
 {

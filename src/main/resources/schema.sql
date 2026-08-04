@@ -170,6 +170,15 @@ CREATE TABLE IF NOT EXISTS hygiene_images (
     CONSTRAINT fk_hygiene_image_inspection FOREIGN KEY (inspection_id) REFERENCES hygiene_inspections(inspection_id)
 );
 
+CREATE TABLE IF NOT EXISTS hygiene_image_contents (
+    image_id BIGINT PRIMARY KEY,
+    image_data LONGBLOB NOT NULL,
+    mime_type VARCHAR(100) NOT NULL,
+    original_filename VARCHAR(255) NOT NULL,
+    byte_size BIGINT NOT NULL,
+    CONSTRAINT fk_hygiene_image_content FOREIGN KEY (image_id) REFERENCES hygiene_images(image_id)
+);
+
 CREATE TABLE IF NOT EXISTS improvement_tasks (
     improvement_task_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     inspection_id BIGINT NOT NULL,
