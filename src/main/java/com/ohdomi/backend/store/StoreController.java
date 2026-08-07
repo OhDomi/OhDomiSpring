@@ -32,14 +32,16 @@ public class StoreController {
         return jdbc.query("""
                 SELECT s.store_id, s.store_code, s.name, u.name, s.region, s.address, s.phone,
                        s.open_time, s.close_time, s.operation_status, s.opened_on,
-                       s.contract_ends_on, s.monthly_sales_target
+                       s.contract_ends_on, s.exclusive_area_sqm, s.latitude, s.longitude,
+                       s.monthly_sales_target
                 FROM stores s JOIN app_users u ON u.user_id = s.owner_user_id
                 ORDER BY s.store_id
                 """, (rs, row) -> new StoreResponse(
                 rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4),
                 rs.getString(5), rs.getString(6), rs.getString(7),
                 rs.getObject(8, LocalTime.class), rs.getObject(9, LocalTime.class), rs.getString(10),
-                rs.getObject(11, LocalDate.class), rs.getObject(12, LocalDate.class), rs.getBigDecimal(13)));
+                rs.getObject(11, LocalDate.class), rs.getObject(12, LocalDate.class),
+                rs.getBigDecimal(13), rs.getBigDecimal(14), rs.getBigDecimal(15), rs.getBigDecimal(16)));
     }
 
     @GetMapping("/{storeId}")
@@ -106,7 +108,9 @@ public class StoreController {
     public record StoreResponse(long storeId, String storeCode, String storeName, String ownerName,
                                 String region, String address, String phone, LocalTime openTime,
                                 LocalTime closeTime, String operationStatus, LocalDate openedOn,
-                                LocalDate contractEndsOn, BigDecimal monthlySalesTarget) {}
+                                LocalDate contractEndsOn, BigDecimal exclusiveAreaSqm,
+                                BigDecimal latitude, BigDecimal longitude,
+                                BigDecimal monthlySalesTarget) {}
     public record StaffShiftResponse(long staffShiftId, String name, String role, LocalDate workDate,
                                      LocalTime startsAt, LocalTime endsAt, String status) {}
     public record FacilityResponse(long facilityId, String name, String status, String memo,

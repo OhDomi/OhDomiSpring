@@ -84,11 +84,22 @@ INSERT IGNORE INTO improvement_tasks (improvement_task_id, inspection_id, title,
   (1, 1, '출입구 주변 박스 정리', '홀 입구 근처 적재물로 이동 동선에 방해될 수 있습니다.', 'WARNING', 'OPEN'),
   (2, 1, '바닥 물기 재확인', '점심 피크 전 바닥 미끄럼 위험 여부를 확인하세요.', 'CHECK', 'OPEN');
 
-INSERT IGNORE INTO risk_assessments (risk_assessment_id, store_id, risk_score, risk_level, sales_change_rate, hygiene_score, delayed_order_count, complaint_count, main_reason, prediction, recommended_action, assessed_at) VALUES
-  (1, 5, 87, 'HIGH', -7.6, 69, 3, 12, '매출 감소와 위생 점수 하락이 동시에 발생했습니다.', '향후 2주 내 운영 리스크가 높아질 가능성이 큽니다.', '본사 현장 점검 및 운영 상담을 권장합니다.', CURRENT_TIMESTAMP),
-  (2, 1, 78, 'HIGH', 8.4, 72, 1, 8, '매출은 양호하지만 위생 점검 이슈가 반복되고 있습니다.', '위생 관리 미흡이 브랜드 신뢰도 리스크로 이어질 수 있습니다.', '조리대 재점검 요청과 점주 안내가 필요합니다.', CURRENT_TIMESTAMP),
-  (3, 3, 62, 'WARNING', -2.8, 86, 2, 5, '월 매출 목표 달성률이 낮고 발주 지연이 발생했습니다.', '재고 부족으로 판매 기회 손실 가능성이 있습니다.', '발주 패턴 점검과 매출 개선 가이드를 권장합니다.', CURRENT_TIMESTAMP),
-  (4, 2, 18, 'SAFE', 14.2, 94, 0, 1, '매출, 위생, 발주 지표가 모두 안정적입니다.', '단기 운영 리스크가 낮은 상태입니다.', '우수 매장 사례로 운영 노하우를 공유할 수 있습니다.', CURRENT_TIMESTAMP);
+INSERT IGNORE INTO risk_assessments
+  (risk_assessment_id, store_id, model_version, risk_score, risk_level,
+   location_risk_score, classification_detail, main_reason, prediction,
+   recommended_action, assessed_at) VALUES
+  (1, 5, 'closure-risk-v2', 87, 5, 82, '업종·입지 복합 고위험', '입지 및 업종 위험 신호가 함께 높습니다.', '단기 폐점 위험이 높은 구간입니다.', '현장 진단과 재계약 조건 검토를 우선 진행하세요.', CURRENT_TIMESTAMP),
+  (2, 1, 'closure-risk-v2', 78, 4, 76, '입지 위험', '상권 경쟁밀도가 높고 접근성이 낮습니다.', '입지 위험이 운영 안정성에 영향을 줄 수 있습니다.', '상권 대응 프로모션과 배달 채널 강화를 검토하세요.', CURRENT_TIMESTAMP),
+  (3, 3, 'closure-risk-v2', 62, 3, 64, '관찰 필요', '경쟁점 증가가 위험도를 끌어올렸습니다.', '중기 위험 추이를 관찰할 필요가 있습니다.', '경쟁점 변화와 상권 유입을 월별로 점검하세요.', CURRENT_TIMESTAMP),
+  (4, 2, 'closure-risk-v2', 18, 1, 21, '안정', '업종과 입지 위험 신호가 모두 낮습니다.', '현재 폐점 위험은 낮은 수준입니다.', '정기 모니터링을 유지하세요.', CURRENT_TIMESTAMP);
+
+INSERT IGNORE INTO risk_factors
+  (risk_factor_id, risk_assessment_id, model_version, factor_rank, feature_name,
+   category, shap_contribution, evidence, preventive_action, clause_template) VALUES
+  (1, 1, 'closure-risk-v2', 1, 'avg_competitors_250m', '경쟁밀도', 0.381200, '반경 250m 내 동일업종 경쟁점포가 많습니다.', '지역 맞춤 포지셔닝과 배달 채널을 강화하세요.', '상권보호 범위와 경쟁밀도 급변 시 지원 조건을 검토한다.'),
+  (2, 1, 'closure-risk-v2', 2, 'dist_subway_m', '접근성', 0.245100, '대중교통 접근성이 비교군보다 낮습니다.', '픽업·배달 접근성을 보완하세요.', '접근성 저하 시 공동 마케팅 지원 조건을 검토한다.'),
+  (3, 2, 'closure-risk-v2', 1, 'sgis_grid_population', '배후인구', 0.297400, '배후 거주인구가 비교군보다 적습니다.', '배달 권역과 시간대별 홍보를 확대하세요.', '배후인구 희박 지역의 매출 기준 완화를 검토한다.'),
+  (4, 3, 'closure-risk-v2', 1, 'avg_competitors_500m', '경쟁밀도', 0.168900, '반경 500m 내 경쟁점 수가 증가했습니다.', '경쟁점 변화를 정기 모니터링하세요.', '경쟁밀도 급변 시 갱신조건 재검토 절차를 둔다.');
 
 INSERT IGNORE INTO board_posts (post_id, author_user_id, store_id, board_type, category, title, content, status, is_pinned, is_urgent, view_count, created_at, updated_at) VALUES
   (1, 1, NULL, 'NOTICE', '메뉴', '7월 신메뉴 출시 안내', '7월 20일부터 여름 한정 메뉴가 추가됩니다. 발주 품목을 확인해 주세요.', 'PUBLISHED', TRUE, FALSE, 48, '2026-07-10 09:00:00', '2026-07-10 09:00:00'),

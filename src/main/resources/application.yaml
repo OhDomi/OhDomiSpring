@@ -33,6 +33,13 @@ spring:
 hygiene-ai:
   base-url: ${HYGIENE_AI_BASE_URL:http://127.0.0.1:8000}
 
+risk-model:
+  base-url: ${RISK_MODEL_BASE_URL:http://127.0.0.1:8001}
+  predict-path: ${RISK_MODEL_PREDICT_PATH:/risk/predict}
+  enabled: ${RISK_MODEL_REFRESH_ENABLED:true}
+  refresh-cron: ${RISK_MODEL_REFRESH_CRON:0 0 3 * * *}
+  refresh-zone: ${RISK_MODEL_REFRESH_ZONE:Asia/Seoul}
+
 server:
   error:
     include-message: always

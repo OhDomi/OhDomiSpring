@@ -10,6 +10,7 @@ import java.util.List;
 import com.ohdomi.backend.global.ConflictException;
 import com.ohdomi.backend.global.ResourceNotFoundException;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
@@ -51,8 +52,9 @@ public class StoreWriteController {
                         INSERT INTO stores
                           (owner_user_id, store_code, name, region, address, phone, open_time,
                            close_time, operation_status, opened_on, contract_ends_on,
-                           monthly_sales_target, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                           exclusive_area_sqm, latitude, longitude, monthly_sales_target,
+                           created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                         """, new String[]{"store_id"});
                 setStoreFields(statement, request, 1);
                 return statement;
@@ -73,12 +75,14 @@ public class StoreWriteController {
             jdbc.update("""
                     UPDATE stores SET owner_user_id=?, store_code=?, name=?, region=?, address=?,
                       phone=?, open_time=?, close_time=?, operation_status=?, opened_on=?,
-                      contract_ends_on=?, monthly_sales_target=?, updated_at=CURRENT_TIMESTAMP
+                      contract_ends_on=?, exclusive_area_sqm=?, latitude=?, longitude=?,
+                      monthly_sales_target=?, updated_at=CURRENT_TIMESTAMP
                     WHERE store_id=?
                     """, request.ownerUserId(), request.storeCode().trim(), request.name().trim(),
                     request.region().trim(), request.address().trim(), request.phone().trim(),
                     request.openTime(), request.closeTime(), request.operationStatus().toUpperCase(),
-                    request.openedOn(), request.contractEndsOn(), request.monthlySalesTarget(), storeId);
+                    request.openedOn(), request.contractEndsOn(), request.exclusiveAreaSqm(),
+                    request.latitude(), request.longitude(), request.monthlySalesTarget(), storeId);
         } catch (DuplicateKeyException exception) {
             throw new ConflictException("Store code " + request.storeCode() + " already exists");
         }
@@ -335,7 +339,10 @@ public class StoreWriteController {
         statement.setString(offset + 8, request.operationStatus().toUpperCase());
         statement.setObject(offset + 9, request.openedOn());
         statement.setObject(offset + 10, request.contractEndsOn());
-        statement.setBigDecimal(offset + 11, request.monthlySalesTarget());
+        statement.setBigDecimal(offset + 11, request.exclusiveAreaSqm());
+        statement.setBigDecimal(offset + 12, request.latitude());
+        statement.setBigDecimal(offset + 13, request.longitude());
+        statement.setBigDecimal(offset + 14, request.monthlySalesTarget());
     }
 
     private void setInventoryFields(PreparedStatement statement, InventoryRequest request, int offset)
@@ -352,13 +359,15 @@ public class StoreWriteController {
         List<StoreController.StoreResponse> stores = jdbc.query("""
                 SELECT s.store_id, s.store_code, s.name, u.name, s.region, s.address, s.phone,
                        s.open_time, s.close_time, s.operation_status, s.opened_on,
-                       s.contract_ends_on, s.monthly_sales_target
+                       s.contract_ends_on, s.exclusive_area_sqm, s.latitude, s.longitude,
+                       s.monthly_sales_target
                 FROM stores s JOIN app_users u ON u.user_id=s.owner_user_id WHERE s.store_id=?
                 """, (rs, row) -> new StoreController.StoreResponse(
                 rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4),
                 rs.getString(5), rs.getString(6), rs.getString(7),
                 rs.getObject(8, LocalTime.class), rs.getObject(9, LocalTime.class), rs.getString(10),
-                rs.getObject(11, LocalDate.class), rs.getObject(12, LocalDate.class), rs.getBigDecimal(13)), storeId);
+                rs.getObject(11, LocalDate.class), rs.getObject(12, LocalDate.class),
+                rs.getBigDecimal(13), rs.getBigDecimal(14), rs.getBigDecimal(15), rs.getBigDecimal(16)), storeId);
         if (stores.isEmpty()) throw new ResourceNotFoundException("Store " + storeId + " was not found");
         return stores.get(0);
     }
@@ -431,6 +440,9 @@ public class StoreWriteController {
             @NotBlank @Size(max = 30) String operationStatus,
             LocalDate openedOn,
             LocalDate contractEndsOn,
+            @DecimalMin("0.01") BigDecimal exclusiveAreaSqm,
+            @DecimalMin("-90") @DecimalMax("90") BigDecimal latitude,
+            @DecimalMin("-180") @DecimalMax("180") BigDecimal longitude,
             @NotNull @DecimalMin("0") BigDecimal monthlySalesTarget) {}
 
     public record StaffShiftRequest(

@@ -184,7 +184,7 @@ public class UiDataController {
                 SELECT s.store_id,s.name,u.name,s.region,s.address,s.phone,s.contract_ends_on,
                   COALESCE((SELECT SUM(o.total_amount) FROM customer_orders o WHERE o.store_id=s.store_id),0),
                   COALESCE((SELECT h.score FROM hygiene_inspections h WHERE h.store_id=s.store_id ORDER BY h.inspected_at DESC LIMIT 1),0),
-                  COALESCE((SELECT r.risk_level FROM risk_assessments r WHERE r.store_id=s.store_id ORDER BY r.assessed_at DESC LIMIT 1),'SAFE'),
+                  COALESCE((SELECT r.risk_level FROM risk_assessments r WHERE r.store_id=s.store_id ORDER BY r.assessed_at DESC LIMIT 1),1),
                   (SELECT h.inspected_at FROM hygiene_inspections h WHERE h.store_id=s.store_id ORDER BY h.inspected_at DESC LIMIT 1),
                   COALESCE((SELECT h.summary FROM hygiene_inspections h WHERE h.store_id=s.store_id ORDER BY h.inspected_at DESC LIMIT 1),'특이사항 없음')
                 FROM stores s JOIN app_users u ON u.user_id=s.owner_user_id ORDER BY s.store_id
@@ -209,16 +209,19 @@ public class UiDataController {
     @GetMapping("/admin/risks")
     public Map<String, Object> adminRisks() {
         List<Map<String, Object>> risks = jdbc.query("""
-                SELECT s.name,u.name,s.region,r.risk_level,r.risk_score,r.sales_change_rate,r.hygiene_score,
-                       r.delayed_order_count,r.complaint_count,r.main_reason,r.prediction,r.recommended_action
+                SELECT r.risk_assessment_id,s.name,u.name,s.region,r.risk_level,r.risk_score,
+                       r.location_risk_score,r.classification_detail,r.main_reason,r.prediction,
+                       r.recommended_action,r.model_version,r.assessed_at
                 FROM risk_assessments r JOIN stores s ON s.store_id=r.store_id JOIN app_users u ON u.user_id=s.owner_user_id
                 WHERE r.risk_assessment_id=(SELECT MAX(x.risk_assessment_id) FROM risk_assessments x WHERE x.store_id=r.store_id)
                 ORDER BY r.risk_score DESC
-                """, (rs, n) -> m("name", rs.getString(1), "owner", rs.getString(2), "region", rs.getString(3),
-                "riskLevel", riskLevelKo(rs.getString(4)), "riskScore", rs.getInt(5),
-                "salesChange", signedPercent(rs.getBigDecimal(6)), "hygieneScore", rs.getInt(7),
-                "orderDelay", rs.getInt(8) + "회", "complaintCount", rs.getInt(9),
-                "mainReason", rs.getString(10), "prediction", rs.getString(11), "action", rs.getString(12)));
+                """, (rs, n) -> m("riskAssessmentId", rs.getLong(1), "name", rs.getString(2),
+                "owner", rs.getString(3), "region", rs.getString(4),
+                "riskLevel", riskLevelKo(rs.getString(5)), "riskLevelValue", rs.getInt(5),
+                "riskScore", rs.getInt(6), "locationRiskScore", rs.getBigDecimal(7),
+                "classificationDetail", rs.getString(8), "mainReason", rs.getString(9),
+                "prediction", rs.getString(10), "action", rs.getString(11),
+                "modelVersion", rs.getString(12), "assessedAt", dateTime(rs.getTimestamp(13))));
         long high = risks.stream().filter(r -> "높음".equals(r.get("riskLevel"))).count();
         long warning = risks.stream().filter(r -> "주의".equals(r.get("riskLevel"))).count();
         double average = risks.stream().mapToInt(r -> (Integer) r.get("riskScore")).average().orElse(0);
@@ -227,11 +230,14 @@ public class UiDataController {
                         "priority", "높음".equals(r.get("riskLevel")) ? "긴급" : "주의")).toList();
         return m("riskSummary", m("totalStores", risks.size(), "highRiskStores", high,
                         "warningStores", warning, "stableStores", risks.size() - high - warning, "averageRiskScore", average),
-                "riskStores", risks, "riskFactors", List.of(
-                        m("factor", "매출 감소", "weight", 35, "description", "최근 매출 변화율을 반영합니다."),
-                        m("factor", "위생 점수", "weight", 30, "description", "최근 위생 점수를 반영합니다."),
-                        m("factor", "발주 지연", "weight", 20, "description", "발주 지연 횟수를 반영합니다."),
-                        m("factor", "고객 문의/불만", "weight", 15, "description", "문의 발생량을 반영합니다.")),
+                "riskStores", risks, "riskFactors", jdbc.query("""
+                        SELECT f.category,f.shap_contribution,f.evidence FROM risk_factors f
+                        JOIN risk_assessments r ON r.risk_assessment_id=f.risk_assessment_id
+                        WHERE r.risk_assessment_id=(SELECT MAX(x.risk_assessment_id) FROM risk_assessments x WHERE x.store_id=r.store_id)
+                        ORDER BY ABS(f.shap_contribution) DESC LIMIT 4
+                        """, (rs, n) -> m("factor", rs.getString(1),
+                        "weight", rs.getBigDecimal(2).abs().multiply(BigDecimal.valueOf(100)).intValue(),
+                        "description", rs.getString(3))),
                 "riskTrend", List.of(m("label", "현재", "high", high, "warning", warning)),
                 "aiRecommendations", recommendations);
     }
@@ -278,18 +284,24 @@ public class UiDataController {
 
     @GetMapping("/admin/sales")
     public Map<String, Object> adminSales() {
+        Timestamp currentPeriodStart = Timestamp.valueOf(LocalDate.now().minusDays(29).atStartOfDay());
+        Timestamp previousPeriodStart = Timestamp.valueOf(LocalDate.now().minusDays(59).atStartOfDay());
         List<Map<String, Object>> ranking = jdbc.query("""
-                SELECT s.name,u.name,s.region,COALESCE(SUM(o.total_amount),0),COUNT(o.customer_order_id),
-                       COALESCE((SELECT r.sales_change_rate FROM risk_assessments r WHERE r.store_id=s.store_id ORDER BY r.assessed_at DESC LIMIT 1),0)
+                SELECT s.name,u.name,s.region,
+                       COALESCE(SUM(CASE WHEN o.ordered_at >= ? THEN o.total_amount ELSE 0 END),0),
+                       SUM(CASE WHEN o.ordered_at >= ? THEN 1 ELSE 0 END),
+                       COALESCE(SUM(CASE WHEN o.ordered_at >= ? AND o.ordered_at < ? THEN o.total_amount ELSE 0 END),0)
                 FROM stores s JOIN app_users u ON u.user_id=s.owner_user_id
                 LEFT JOIN customer_orders o ON o.store_id=s.store_id
-                GROUP BY s.store_id,s.name,u.name,s.region ORDER BY COALESCE(SUM(o.total_amount),0) DESC
+                GROUP BY s.store_id,s.name,u.name,s.region ORDER BY 4 DESC
                 """, (rs, n) -> {
-            BigDecimal growth = rs.getBigDecimal(6);
+            BigDecimal currentSales = rs.getBigDecimal(4);
+            BigDecimal previousSales = rs.getBigDecimal(6);
+            BigDecimal growth = percentChange(currentSales, previousSales);
             return m("rank", n + 1, "store", rs.getString(1), "owner", rs.getString(2), "region", rs.getString(3),
-                    "sales", won(rs.getBigDecimal(4)), "orders", rs.getLong(5) + "건", "growth", signedPercent(growth),
+                    "sales", won(currentSales), "orders", rs.getLong(5) + "건", "growth", signedPercent(growth),
                     "status", growth.signum() < 0 ? "주의" : "양호");
-        });
+        }, currentPeriodStart, currentPeriodStart, previousPeriodStart, currentPeriodStart);
         BigDecimal totalSales = ranking.stream().map(r -> money((String) r.get("sales"))).reduce(BigDecimal.ZERO, BigDecimal::add);
         long orders = jdbc.queryForObject("SELECT COUNT(*) FROM customer_orders", Long.class);
         BigDecimal average = orders == 0 ? BigDecimal.ZERO : totalSales.divide(BigDecimal.valueOf(orders), 0, RoundingMode.HALF_UP);
@@ -335,10 +347,15 @@ public class UiDataController {
     private static String staffStatusKo(String value) { return switch (value) { case "CHECKED_IN" -> "출근 완료"; case "WORKING" -> "근무 중"; default -> "근무 예정"; }; }
     private static String priorityKo(String value) { return switch (value == null ? "" : value) { case "URGENT" -> "긴급"; case "WARNING" -> "주의"; default -> "확인"; }; }
     private static String riskKo(String value) { return switch (value) { case "SHORTAGE" -> "부족"; case "WARNING" -> "주의"; default -> "안전"; }; }
-    private static String riskLevelKo(String value) { return switch (value) { case "HIGH" -> "높음"; case "WARNING" -> "주의"; default -> "안전"; }; }
+    private static String riskLevelKo(String value) { return switch (value) { case "4", "5", "HIGH" -> "높음"; case "3", "WARNING" -> "주의"; default -> "안전"; }; }
     private static String orderStatusKo(String value) { return switch (value) { case "DRAFT" -> "작성중"; case "SHIPPING" -> "배송중"; case "RECEIVED" -> "입고완료"; default -> value; }; }
     private static String channelKo(String value) { return switch (value) { case "IN_STORE" -> "매장 주문"; case "DELIVERY" -> "배달앱"; default -> "포장 주문"; }; }
     private static String signedPercent(BigDecimal value) { return (value.signum() >= 0 ? "+" : "") + value.stripTrailingZeros().toPlainString() + "%"; }
+    private static BigDecimal percentChange(BigDecimal current, BigDecimal previous) {
+        if (previous.signum() == 0) return current.signum() == 0 ? BigDecimal.ZERO : BigDecimal.valueOf(100);
+        return current.subtract(previous).multiply(BigDecimal.valueOf(100))
+                .divide(previous, 1, RoundingMode.HALF_UP);
+    }
     private static Map<String, Object> m(Object... values) {
         Map<String, Object> result = new LinkedHashMap<>();
         for (int i = 0; i < values.length; i += 2) result.put((String) values[i], values[i + 1]);

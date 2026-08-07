@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: jdbc:h2:mem:ohdomi-test;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    url: jdbc:h2:mem:ohdomi-test-${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
     driver-class-name: org.h2.Driver
     username: sa
     password:
@@ -18,3 +18,6 @@ spring:
 
 hygiene-ai:
   base-url: http://127.0.0.1:8000
+
+risk-model:
+  enabled: false

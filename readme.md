@@ -42,7 +42,6 @@ All request and response bodies use JSON. Dates use `YYYY-MM-DD`, times use
 | `GET` | `/api/hygiene-inspections/images/{imageId}` | Stream a stored inspection image |
 | `GET` | `/api/hygiene-inspections/{inspectionId}` | Get inspection details |
 | `GET` | `/api/risk-assessments/latest` | Get the latest store risk assessments |
-| `POST` | `/api/risk-assessments` | Upload a store risk assessment |
 | `GET` | `/api/board/posts` | List notice or inquiry posts |
 | `GET` | `/api/board/posts/{postId}` | Get one board post |
 | `POST` | `/api/board/posts` | Create a notice or inquiry |
@@ -514,6 +513,18 @@ analysis endpoint are stored as database binary content.
 
 ## Risk assessments
 
+### Kimgane store seed handoff
+
+The public-data handoff should follow `docs/kimgane-stores.template.csv`. Required
+columns are `store_code`, `name`, `region`, `address`, `latitude`, and `longitude`.
+`opened_on` and `exclusive_area_sqm` may remain empty until contract/store-management
+data is supplied. Actual sales remain sourced from `customer_orders` and
+`GET /api/stores/{id}/sales-summary`; they are not duplicated in the store or risk tables.
+
+Before importing, validate unique store codes, coordinate ranges, and the expected
+216 nationwide / 88 Seoul row counts. The source rows have not been supplied in this
+workspace, so the repository includes the import contract rather than fabricated stores.
+
 ### `GET /api/risk-assessments/latest`
 
 Returns the latest assessment for every store, ordered by risk score descending.
@@ -522,42 +533,25 @@ Query parameters:
 
 | Parameter | Required | Description |
 | --- | --- | --- |
-| `level` | No | Filter by risk level (converted to uppercase) |
+| `level` | No | Filter by numeric risk level (`1` through `5`) |
 
 Example:
 
 ```http
-GET /api/risk-assessments/latest?level=HIGH
+GET /api/risk-assessments/latest?level=5
 ```
 
 Response fields per assessment:
 
 ```text
-riskAssessmentId, storeId, storeName, ownerName, region, riskScore,
-riskLevel, salesChangeRate, hygieneScore, delayedOrderCount,
-complaintCount, mainReason, prediction, recommendedAction, assessedAt
+riskAssessmentId, storeId, storeName, ownerName, region, modelVersion,
+riskScore, riskLevel, locationRiskScore, classificationDetail, mainReason,
+prediction, recommendedAction, assessedAt, riskFactors[]
 ```
 
-### `POST /api/risk-assessments`
-
-Uploads a store risk assessment and returns `201 Created`. `riskScore` and
-`hygieneScore` must be between 0 and 100.
-
-```json
-{
-  "storeId": 1,
-  "riskScore": 65.5,
-  "riskLevel": "WARNING",
-  "salesChangeRate": -3.2,
-  "hygieneScore": 85,
-  "delayedOrderCount": 1,
-  "complaintCount": 2,
-  "mainReason": "Sales decreased",
-  "prediction": "Risk may increase",
-  "recommendedAction": "Review store operations",
-  "assessedAt": "2026-07-29T12:00:00"
-}
-```
+Assessments are written by `RiskAssessmentRefreshService`, which calls the configured
+model server on the `risk-model.refresh-cron` schedule. Operational sales and hygiene
+signals remain available from their own order/sales and hygiene resources.
 
 ## Board
 

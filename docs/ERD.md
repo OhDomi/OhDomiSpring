@@ -29,6 +29,7 @@ erDiagram
     HYGIENE_INSPECTIONS ||--o{ IMPROVEMENT_TASKS : creates
 
     STORES ||--o{ RISK_ASSESSMENTS : assessed_by
+    RISK_ASSESSMENTS ||--o{ RISK_FACTORS : explained_by
     STORES ||--o{ BOARD_POSTS : concerns
     BOARD_POSTS ||--o| BOARD_ANSWERS : has
     STORES ||--o{ NOTIFICATIONS : triggers
@@ -49,6 +50,9 @@ erDiagram
       varchar region
       varchar address
       date contract_ends_on
+      decimal exclusive_area_sqm
+      decimal latitude
+      decimal longitude
       decimal monthly_sales_target
     }
     CUSTOMER_ORDERS {
@@ -134,13 +138,24 @@ erDiagram
     RISK_ASSESSMENTS {
       bigint risk_assessment_id PK
       bigint store_id FK
+      varchar model_version
       decimal risk_score
-      varchar risk_level
-      decimal sales_change_rate
-      int hygiene_score
-      int delayed_order_count
-      int complaint_count
+      int risk_level
+      decimal location_risk_score
+      varchar classification_detail
+      varchar main_reason
+      varchar recommended_action
       timestamp assessed_at
+    }
+    RISK_FACTORS {
+      bigint risk_factor_id PK
+      bigint risk_assessment_id FK
+      int factor_rank
+      varchar feature_name
+      varchar category
+      decimal shap_contribution
+      varchar evidence
+      varchar preventive_action
     }
     BOARD_POSTS {
       bigint post_id PK
@@ -214,8 +229,7 @@ erDiagram
 | GET | `/api/hygiene-inspections?storeId={storeId}` | Inspection history |
 | POST | `/api/hygiene-inspections` | Upload an inspection, results, images, and tasks |
 | GET | `/api/hygiene-inspections/{inspectionId}` | Inspection results, images, and tasks |
-| GET | `/api/risk-assessments/latest?level=HIGH` | Latest risk per store |
-| POST | `/api/risk-assessments` | Upload a store risk assessment |
+| GET | `/api/risk-assessments/latest?level=5` | Latest risk and SHAP factors per store |
 | GET | `/api/board/posts?boardType=NOTICE` | Board listing |
 | GET | `/api/board/posts/{postId}` | Detail and view-count increment |
 | POST | `/api/board/posts` | Create a post |

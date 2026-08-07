@@ -301,25 +301,10 @@ class OhDomiApiIntegrationTests {
                 .andExpect(jsonPath("$.images.length()").value(1))
                 .andExpect(jsonPath("$.improvementTasks.length()").value(1));
 
-        mockMvc.perform(post("/api/risk-assessments")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "storeId":1,
-                                  "riskScore":65.5,
-                                  "riskLevel":"WARNING",
-                                  "salesChangeRate":-3.2,
-                                  "hygieneScore":85,
-                                  "delayedOrderCount":1,
-                                  "complaintCount":2,
-                                  "mainReason":"Sales decreased",
-                                  "prediction":"Risk may increase",
-                                  "recommendedAction":"Review store operations",
-                                  "assessedAt":"2026-07-29T12:00:00"
-                                }
-                                """))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.riskLevel").value("WARNING"))
-                .andExpect(jsonPath("$.storeId").value(1));
+        mockMvc.perform(get("/api/risk-assessments/latest"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].riskLevel").value(5))
+                .andExpect(jsonPath("$[0].storeId").value(5))
+                .andExpect(jsonPath("$[0].riskFactors[0].featureName").value("avg_competitors_250m"));
     }
 }
