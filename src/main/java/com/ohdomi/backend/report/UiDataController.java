@@ -180,27 +180,48 @@ public class UiDataController {
 
     @GetMapping("/admin/stores")
     public Map<String, Object> adminStores() {
+        // 2026-08-08: 216개 실매장 임포트(store_code='KG-%')를 지원하기 위해 두 가지 보강 —
+        // (1) store_code를 노출해 프런트가 "임포트" 배지를 붙일 수 있게 함(구분 없이 섞이면
+        // 실제 가입 매장처럼 보인다는 리포트). (2) 주문이 아예 없는 매장은 "₩0"이 아니라
+        // "데이터 없음"으로 — COALESCE(SUM,0)만 쓰면 "매출이 0원"과 "매출 데이터 자체가
+        // 없음"이 구분이 안 돼, 임포트 매장 216개가 전부 매출 0원짜리 매장처럼 보이는 문제.
         List<Map<String, Object>> stores = jdbc.query("""
                 SELECT s.store_id,s.name,u.name,s.region,s.address,s.phone,s.contract_ends_on,
                   COALESCE((SELECT SUM(o.total_amount) FROM customer_orders o WHERE o.store_id=s.store_id),0),
                   COALESCE((SELECT h.score FROM hygiene_inspections h WHERE h.store_id=s.store_id ORDER BY h.inspected_at DESC LIMIT 1),0),
                   COALESCE((SELECT r.risk_level FROM risk_assessments r WHERE r.store_id=s.store_id ORDER BY r.assessed_at DESC LIMIT 1),1),
                   (SELECT h.inspected_at FROM hygiene_inspections h WHERE h.store_id=s.store_id ORDER BY h.inspected_at DESC LIMIT 1),
-                  COALESCE((SELECT h.summary FROM hygiene_inspections h WHERE h.store_id=s.store_id ORDER BY h.inspected_at DESC LIMIT 1),'특이사항 없음')
+                  COALESCE((SELECT h.summary FROM hygiene_inspections h WHERE h.store_id=s.store_id ORDER BY h.inspected_at DESC LIMIT 1),'특이사항 없음'),
+                  s.store_code,
+                  (SELECT COUNT(*) FROM customer_orders o WHERE o.store_id=s.store_id)
                 FROM stores s JOIN app_users u ON u.user_id=s.owner_user_id ORDER BY s.store_id
-                """, (rs, n) -> m("name", rs.getString(2), "owner", rs.getString(3), "region", rs.getString(4),
-                "sales", won(rs.getBigDecimal(8)), "monthlySales", won(rs.getBigDecimal(8)),
-                "hygieneScore", rs.getInt(9), "risk", riskLevelKo(rs.getString(10)),
-                "contractStatus", rs.getDate(7).toLocalDate().isBefore(LocalDate.now().plusMonths(6)) ? "재계약 검토" : "정상",
-                "lastInspection", dateTime(rs.getTimestamp(11)), "issue", rs.getString(12),
-                "phone", rs.getString(6), "address", rs.getString(5)));
+                """, (rs, n) -> {
+            String storeCode = rs.getString(13);
+            boolean imported = storeCode != null && storeCode.startsWith("KG-");
+            long orderCount = rs.getLong(14);
+            String salesDisplay = orderCount == 0 ? "데이터 없음" : won(rs.getBigDecimal(8));
+            return m("name", rs.getString(2), "owner", rs.getString(3), "region", rs.getString(4),
+                    "sales", salesDisplay, "monthlySales", salesDisplay,
+                    "hygieneScore", rs.getInt(9), "risk", riskLevelKo(rs.getString(10)),
+                    "contractStatus", rs.getDate(7).toLocalDate().isBefore(LocalDate.now().plusMonths(6)) ? "재계약 검토" : "정상",
+                    "lastInspection", dateTime(rs.getTimestamp(11)), "issue", rs.getString(12),
+                    "phone", rs.getString(6), "address", rs.getString(5),
+                    "storeCode", storeCode, "source", imported ? "IMPORTED" : "DEMO");
+        });
         long risks = stores.stream().filter(s -> "높음".equals(s.get("risk"))).count();
         List<Map<String, Object>> actions = stores.stream().filter(s -> !"안전".equals(s.get("risk"))).map(s -> m(
                 "store", s.get("name"), "title", s.get("issue"), "description", "본사 확인이 필요한 MySQL 기반 운영 지표입니다.",
                 "priority", "높음".equals(s.get("risk")) ? "긴급" : "주의")).toList();
+        // 2026-08-08: "서울특별시" 카드가 여러 개 따로 뜨는 버그 발견·수정 — GROUP BY를
+        // region 원본 전체(예: "서울특별시 종로구")로 하고 표시할 때만 시도명만 잘라 썼더니,
+        // 시군구가 다르면 전부 별개 그룹으로 집계된 뒤 겉보기 라벨만 같아져 중복처럼 보였다
+        // (5개 데모 매장일 땐 서울 4곳이 우연히 다 1개씩이라 눈에 덜 띄었을 뿐, 원래 있던 버그).
+        // adminSales()의 지역별 집계가 이미 SUBSTRING_INDEX로 SQL 단에서 시도명만 잘라 GROUP BY
+        // 하는 올바른 패턴이라 그대로 재사용.
         List<Map<String, Object>> regions = jdbc.query("""
-                SELECT region,COUNT(*) FROM stores GROUP BY region ORDER BY COUNT(*) DESC
-                """, (rs, n) -> m("region", rs.getString(1).split(" ")[0], "stores", rs.getInt(2), "risk", 0));
+                SELECT SUBSTRING_INDEX(region,' ',1),COUNT(*) FROM stores
+                GROUP BY SUBSTRING_INDEX(region,' ',1) ORDER BY COUNT(*) DESC
+                """, (rs, n) -> m("region", rs.getString(1), "stores", rs.getInt(2), "risk", 0));
         return m("adminStoreSummary", m("totalStores", stores.size(), "activeStores", stores.size(),
                         "riskStores", risks, "pendingInspections", 0, "contractExpiring", stores.stream().filter(s -> "재계약 검토".equals(s.get("contractStatus"))).count()),
                 "adminStores", stores, "actionRequiredStores", actions, "regionStats", regions);
@@ -244,17 +265,23 @@ public class UiDataController {
 
     @GetMapping("/admin/hygiene")
     public Map<String, Object> adminHygiene() {
+        // 2026-08-08: adminStores()와 같은 이유로 store_code 기반 "임포트" 표식을 같이 노출.
         List<Map<String, Object>> stores = jdbc.query("""
                 SELECT s.name,u.name,s.region,h.score,h.status,h.inspected_at,h.summary,h.reviewer,h.inspection_id,
-                       (SELECT COUNT(*) FROM hygiene_images i WHERE i.inspection_id=h.inspection_id)
+                       (SELECT COUNT(*) FROM hygiene_images i WHERE i.inspection_id=h.inspection_id), s.store_code
                 FROM hygiene_inspections h JOIN stores s ON s.store_id=h.store_id
                 JOIN app_users u ON u.user_id=s.owner_user_id
                 WHERE h.inspection_id=(SELECT MAX(x.inspection_id) FROM hygiene_inspections x WHERE x.store_id=h.store_id)
                 ORDER BY h.score
-                """, (rs, n) -> m("name", rs.getString(1), "owner", rs.getString(2), "region", rs.getString(3),
-                "score", rs.getInt(4), "status", inspectionStatusKo(rs.getString(5)),
-                "lastCheckedAt", dateTime(rs.getTimestamp(6)), "issue", rs.getString(7),
-                "imageCount", rs.getInt(10), "category", "전체 점검", "reviewer", rs.getString(8)));
+                """, (rs, n) -> {
+            String storeCode = rs.getString(11);
+            boolean imported = storeCode != null && storeCode.startsWith("KG-");
+            return m("name", rs.getString(1), "owner", rs.getString(2), "region", rs.getString(3),
+                    "score", rs.getInt(4), "status", inspectionStatusKo(rs.getString(5)),
+                    "lastCheckedAt", dateTime(rs.getTimestamp(6)), "issue", rs.getString(7),
+                    "imageCount", rs.getInt(10), "category", "전체 점검", "reviewer", rs.getString(8),
+                    "storeCode", storeCode, "source", imported ? "IMPORTED" : "DEMO");
+        });
         long checked = stores.size();
         long danger = stores.stream().filter(s -> "긴급".equals(s.get("status"))).count();
         double average = stores.stream().mapToInt(s -> (Integer) s.get("score")).average().orElse(0);
@@ -272,9 +299,14 @@ public class UiDataController {
                 WHERE t.status='OPEN' ORDER BY t.improvement_task_id DESC LIMIT 10
                 """, (rs, n) -> m("store", rs.getString(1), "action", rs.getString(2),
                 "description", rs.getString(3), "priority", priorityKo(rs.getString(4))));
+        // 2026-08-08: 216개 임포트 매장의 더미 점검(전부 오늘 날짜, CURRENT_TIMESTAMP)이
+        // 섞이면 "오늘" 막대가 더미 평균으로 왜곡된다 — 이 추이 차트는 실제 매장 이력을
+        // 보려는 목적이라 임포트 매장은 제외.
         List<Map<String, Object>> trend = jdbc.query("""
-                SELECT DATE(inspected_at),ROUND(AVG(score)) FROM hygiene_inspections
-                GROUP BY DATE(inspected_at) ORDER BY DATE(inspected_at) DESC LIMIT 7
+                SELECT DATE(h.inspected_at),ROUND(AVG(h.score)) FROM hygiene_inspections h
+                JOIN stores s ON s.store_id=h.store_id
+                WHERE s.store_code NOT LIKE 'KG-%'
+                GROUP BY DATE(h.inspected_at) ORDER BY DATE(h.inspected_at) DESC LIMIT 7
                 """, (rs, n) -> m("label", rs.getDate(1).toLocalDate().format(DateTimeFormatter.ofPattern("MM-dd")),
                 "score", rs.getInt(2)));
         return m("adminHygieneSummary", m("totalStores", storeCount(), "checkedStores", checked,
