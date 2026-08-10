@@ -9,9 +9,14 @@ public class CorsConfig implements WebMvcConfigurer {
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
+        // Spring's CORS filter checks the Origin header on every request that carries one
+        // (browsers send it for unsafe methods even when the request is same-origin from the
+        // page's own perspective, e.g. through the Vite dev proxy) — so the team's cloudflare
+        // tunnel domain has to be allow-listed here too, matching closure-risk-model's CORS setup.
         registry.addMapping("/api/**")
-                .allowedOriginPatterns("http://localhost:*", "http://127.0.0.1:*")
+                .allowedOriginPatterns("http://localhost:*", "http://127.0.0.1:*", "https://*.trycloudflare.com")
                 .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
-                .allowedHeaders("*");
+                .allowedHeaders("*")
+                .allowCredentials(true);
     }
 }

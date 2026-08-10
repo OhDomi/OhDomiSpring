@@ -322,17 +322,19 @@ public class UiDataController {
                 SELECT s.name,u.name,s.region,
                        COALESCE(SUM(CASE WHEN o.ordered_at >= ? THEN o.total_amount ELSE 0 END),0),
                        SUM(CASE WHEN o.ordered_at >= ? THEN 1 ELSE 0 END),
-                       COALESCE(SUM(CASE WHEN o.ordered_at >= ? AND o.ordered_at < ? THEN o.total_amount ELSE 0 END),0)
+                       COALESCE(SUM(CASE WHEN o.ordered_at >= ? AND o.ordered_at < ? THEN o.total_amount ELSE 0 END),0),
+                       s.address
                 FROM stores s JOIN app_users u ON u.user_id=s.owner_user_id
                 LEFT JOIN customer_orders o ON o.store_id=s.store_id
-                GROUP BY s.store_id,s.name,u.name,s.region ORDER BY 4 DESC
+                GROUP BY s.store_id,s.name,u.name,s.region,s.address ORDER BY 4 DESC
                 """, (rs, n) -> {
             BigDecimal currentSales = rs.getBigDecimal(4);
             BigDecimal previousSales = rs.getBigDecimal(6);
             BigDecimal growth = percentChange(currentSales, previousSales);
             return m("rank", n + 1, "store", rs.getString(1), "owner", rs.getString(2), "region", rs.getString(3),
-                    "sales", won(currentSales), "orders", rs.getLong(5) + "건", "growth", signedPercent(growth),
-                    "status", growth.signum() < 0 ? "주의" : "양호");
+                    "sales", won(currentSales), "salesAmount", currentSales, "orders", rs.getLong(5) + "건",
+                    "growth", signedPercent(growth), "status", growth.signum() < 0 ? "주의" : "양호",
+                    "address", rs.getString(7));
         }, currentPeriodStart, currentPeriodStart, previousPeriodStart, currentPeriodStart);
         BigDecimal totalSales = ranking.stream().map(r -> money((String) r.get("sales"))).reduce(BigDecimal.ZERO, BigDecimal::add);
         long orders = jdbc.queryForObject("SELECT COUNT(*) FROM customer_orders", Long.class);

@@ -88,6 +88,11 @@ public class HygieneController {
         } catch (IOException exception) {
             throw new IllegalArgumentException("Could not read the uploaded image", exception);
         }
+        // The Content-Type header above is client-supplied and can be spoofed; verify the
+        // actual file bytes match a real image signature before trusting/storing the upload.
+        if (!hasValidImageSignature(imageBytes)) {
+            throw new IllegalArgumentException("Uploaded file is not a valid JPG, PNG, or WebP image");
+        }
         String fileName = StringUtils.hasText(image.getOriginalFilename())
                 ? image.getOriginalFilename() : "hygiene-image";
         HygieneAiClient.ReviewResponse review = hygieneAi.review(
@@ -112,9 +117,19 @@ public class HygieneController {
                 .orElseThrow(() -> new ResourceNotFoundException("Hygiene image " + imageId + " was not found"));
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(image.mimeType()))
+                .header("X-Content-Type-Options", "nosniff")
                 .header("Content-Disposition", ContentDisposition.inline()
                         .filename(image.fileName(), StandardCharsets.UTF_8).build().toString())
                 .body(image.bytes());
+    }
+
+    private static boolean hasValidImageSignature(byte[] bytes) {
+        if (bytes.length < 12) return false;
+        boolean jpeg = (bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xD8 && (bytes[2] & 0xFF) == 0xFF;
+        boolean png = (bytes[0] & 0xFF) == 0x89 && bytes[1] == 'P' && bytes[2] == 'N' && bytes[3] == 'G';
+        boolean webp = bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
+                && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P';
+        return jpeg || png || webp;
     }
 
     @GetMapping
