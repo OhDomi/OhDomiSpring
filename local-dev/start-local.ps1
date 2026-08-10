@@ -50,13 +50,14 @@ for ($i = 0; $i -lt 45; $i++) {
 }
 if ($springReady) { Write-Ok "Spring 준비됨" } else { Write-Warn "Spring이 아직 응답 안 함 — 새 창 로그를 확인하세요" }
 
-# ---------- 3. 김가네 216개 시드 데이터 (없으면 최초 1회만 자동 적용) ----------
+# ---------- 3. 김가네 25개 시드 데이터 (시연용으로 216개 중 선별, 없으면 최초 1회만
+# 자동 적용 — 전체 216개가 필요하면 kimgane_216_*_full216_backup.sql을 대신 쓸 것) ----------
 if ($springReady) {
-    Write-Step "김가네 216개 매장 시드 데이터 확인"
+    Write-Step "김가네 25개 매장 시드 데이터 확인"
     $storeCount = docker exec ohdomi-mysql mysql -uroot -N -e "SELECT COUNT(*) FROM ohdomi.stores WHERE store_code LIKE 'KG-%';" 2>$null
     if ($storeCount -match '^\s*0\s*$') {
-        Write-Ok "매장 216개 임포트 중..."
-        Get-Content (Join-Path $springDir 'kimgane_216_stores_import.sql') -Raw |
+        Write-Ok "매장 25개 임포트 중..."
+        Get-Content (Join-Path $springDir 'kimgane_25_stores_import.sql') -Raw |
             docker exec -i ohdomi-mysql mysql -uroot --default-character-set=utf8mb4 ohdomi
     } else {
         Write-Ok "매장 데이터 이미 있음 (건너뜀)"
@@ -64,8 +65,8 @@ if ($springReady) {
 
     $riskCount = docker exec ohdomi-mysql mysql -uroot -N -e "SELECT COUNT(*) FROM ohdomi.risk_assessments WHERE store_id BETWEEN 1000 AND 1215;" 2>$null
     if ($riskCount -match '^\s*0\s*$') {
-        Write-Ok "리스크 평가 216건 임포트 중..."
-        Get-Content (Join-Path $springDir 'kimgane_216_risk_assessments_import.sql') -Raw |
+        Write-Ok "리스크 평가 25건 임포트 중..."
+        Get-Content (Join-Path $springDir 'kimgane_25_risk_assessments_import.sql') -Raw |
             docker exec -i ohdomi-mysql mysql -uroot --default-character-set=utf8mb4 ohdomi
     } else {
         Write-Ok "리스크 평가 데이터 이미 있음 (건너뜀)"
