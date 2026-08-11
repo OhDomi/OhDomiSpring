@@ -350,9 +350,31 @@ public class UiDataController {
                 "priority", "주의")).toList();
         return m("adminSalesSummary", m("todayTotalSales", won(totalSales), "monthlyTotalSales", won(totalSales),
                         "totalOrders", orders + "건", "averageOrderPrice", won(average), "growthRate", "0%", "targetRate", 0),
-                "monthlySalesTrend", List.of(m("month", LocalDate.now().getMonthValue() + "월", "sales", totalSales.divide(BigDecimal.valueOf(1_000_000), 0, RoundingMode.HALF_UP))),
+                "monthlySalesTrend", monthlySalesTrend(),
                 "regionSales", regions, "storeSalesRanking", ranking, "weakStores", weak,
                 "adminSalesInsights", List.of(m("title", "MySQL 통합 매출 분석", "description", ranking.size() + "개 매장의 주문을 집계했습니다.", "type", "info")));
+    }
+
+    // 실제 월별 매출 추이를 보여주기 위해 최근 5개월(당월 포함)을 달력 월 단위로 집계 —
+    // 이전엔 당월 하나만 담긴 리스트였음(2026-08-10). 주문이 없는 달은 0으로 채운다.
+    private List<Map<String, Object>> monthlySalesTrend() {
+        LocalDate start = LocalDate.now().minusMonths(4).withDayOfMonth(1);
+        List<Map<String, Object>> rows = jdbc.query("""
+                SELECT DATE_FORMAT(ordered_at, '%Y-%m') ym, SUM(total_amount) total
+                FROM customer_orders WHERE ordered_at >= ?
+                GROUP BY DATE_FORMAT(ordered_at, '%Y-%m')
+                """, (rs, n) -> m("ym", rs.getString(1), "total", rs.getBigDecimal(2)),
+                Timestamp.valueOf(start.atStartOfDay()));
+        Map<String, BigDecimal> byMonth = new java.util.HashMap<>();
+        for (Map<String, Object> row : rows) byMonth.put((String) row.get("ym"), (BigDecimal) row.get("total"));
+
+        List<Map<String, Object>> trend = new java.util.ArrayList<>();
+        for (int i = 4; i >= 0; i--) {
+            LocalDate month = LocalDate.now().minusMonths(i);
+            BigDecimal total = byMonth.getOrDefault(month.format(DateTimeFormatter.ofPattern("yyyy-MM")), BigDecimal.ZERO);
+            trend.add(m("month", month.getMonthValue() + "월", "sales", total.divide(BigDecimal.valueOf(1_000_000), 0, RoundingMode.HALF_UP)));
+        }
+        return trend;
     }
 
     private Map<String, Object> one(String sql, Object... args) {
