@@ -18,6 +18,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -40,7 +41,7 @@ public class UiDataController {
     @GetMapping("/admin/overview")
     public Map<String, Object> adminOverview() {
         return m("stores", adminStores(), "hygiene", adminHygiene(),
-                "sales", adminSales(), "risks", adminRisks());
+                "sales", adminSales(6), "risks", adminRisks());
     }
 
     @GetMapping("/stores/{storeId}/management")
@@ -352,7 +353,7 @@ public class UiDataController {
     }
 
     @GetMapping("/admin/sales")
-    public Map<String, Object> adminSales() {
+    public Map<String, Object> adminSales(@RequestParam(defaultValue = "6") int regionMonths) {
         Timestamp currentPeriodStart = Timestamp.valueOf(LocalDate.now().minusDays(29).atStartOfDay());
         Timestamp previousPeriodStart = Timestamp.valueOf(LocalDate.now().minusDays(59).atStartOfDay());
         List<Map<String, Object>> ranking = jdbc.query("""
@@ -376,12 +377,26 @@ public class UiDataController {
         BigDecimal totalSales = ranking.stream().map(r -> money((String) r.get("sales"))).reduce(BigDecimal.ZERO, BigDecimal::add);
         long orders = jdbc.queryForObject("SELECT COUNT(*) FROM customer_orders", Long.class);
         BigDecimal average = orders == 0 ? BigDecimal.ZERO : totalSales.divide(BigDecimal.valueOf(orders), 0, RoundingMode.HALF_UP);
-        List<Map<String, Object>> regions = jdbc.query("""
-                SELECT SUBSTRING_INDEX(s.region,' ',1),COUNT(DISTINCT s.store_id),COALESCE(SUM(o.total_amount),0)
+        // 2026-08-12: "지역별 매출 비교"에 기간 필터(1/3/6/12개월) 추가 요청 — regionMonths로
+        // 지역 매출 합계를 기간 필터링. rate(비중 %)의 분모도 반드시 같은 기간으로 다시 합산한
+        // regionTotalSales를 써야 함 — 예전엔 이 필터 없이 전체기간 합계를, 위 29일짜리
+        // totalSales(전혀 다른 기간)로 나눠 비중이 안 맞을 수 있었음.
+        Timestamp regionPeriodStart = Timestamp.valueOf(LocalDate.now().minusMonths(regionMonths).atStartOfDay());
+        List<Map<String, Object>> regionRows = jdbc.query("""
+                SELECT SUBSTRING_INDEX(s.region,' ',1),COUNT(DISTINCT s.store_id),
+                       COALESCE(SUM(CASE WHEN o.ordered_at >= ? THEN o.total_amount ELSE 0 END),0)
                 FROM stores s LEFT JOIN customer_orders o ON o.store_id=s.store_id
-                GROUP BY SUBSTRING_INDEX(s.region,' ',1) ORDER BY SUM(o.total_amount) DESC
-                """, (rs, n) -> m("region", rs.getString(1), "stores", rs.getInt(2), "sales", won(rs.getBigDecimal(3)),
-                "growth", "0%", "rate", totalSales.signum() == 0 ? 0 : rs.getBigDecimal(3).multiply(BigDecimal.valueOf(100)).divide(totalSales, 0, RoundingMode.HALF_UP).intValue()));
+                GROUP BY SUBSTRING_INDEX(s.region,' ',1) ORDER BY 3 DESC
+                """, (rs, n) -> m("region", rs.getString(1), "stores", rs.getInt(2), "salesAmount", rs.getBigDecimal(3)),
+                regionPeriodStart);
+        BigDecimal regionTotalSales = regionRows.stream()
+                .map(r -> (BigDecimal) r.get("salesAmount")).reduce(BigDecimal.ZERO, BigDecimal::add);
+        List<Map<String, Object>> regions = regionRows.stream().map(r -> {
+            BigDecimal amount = (BigDecimal) r.get("salesAmount");
+            return m("region", r.get("region"), "stores", r.get("stores"), "sales", won(amount), "growth", "0%",
+                    "rate", regionTotalSales.signum() == 0 ? 0
+                            : amount.multiply(BigDecimal.valueOf(100)).divide(regionTotalSales, 0, RoundingMode.HALF_UP).intValue());
+        }).toList();
         List<Map<String, Object>> weak = ranking.stream().filter(r -> "주의".equals(r.get("status"))).map(r -> m(
                 "store", r.get("store"), "issue", "매출 변화율 감소", "description", r.get("growth") + "의 변화율이 기록되었습니다.",
                 "priority", "주의")).toList();
