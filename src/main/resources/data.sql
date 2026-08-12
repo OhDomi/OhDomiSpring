@@ -80,9 +80,14 @@ INSERT IGNORE INTO hygiene_images (image_id, inspection_id, image_url, category,
   (1, 1, '/uploads/hygiene/1-counter.jpg', 'COUNTER', '정상', '2026-07-21 09:38:00'),
   (2, 1, '/uploads/hygiene/1-fridge.jpg', 'FRIDGE', '정상', '2026-07-21 09:38:30'),
   (3, 1, '/uploads/hygiene/1-entrance.jpg', 'ENTRANCE', '정리 필요', '2026-07-21 09:39:00');
+-- 2026-08-12: 개선과제 2건 다 WARNING/CHECK뿐이라 위생 점검 페이지의 "본사 조치
+-- 필요 항목"에 긴급(URGENT) 항목이 하나도 안 뜨던 문제 — URGENT 상태 점검(부산서면점
+-- inspection_id=7, 김가네 임포트 매장 inspection_id=1105)에 긴급 개선과제 추가.
 INSERT IGNORE INTO improvement_tasks (improvement_task_id, inspection_id, title, description, priority, status) VALUES
   (1, 1, '출입구 주변 박스 정리', '홀 입구 근처 적재물로 이동 동선에 방해될 수 있습니다.', 'WARNING', 'OPEN'),
-  (2, 1, '바닥 물기 재확인', '점심 피크 전 바닥 미끄럼 위험 여부를 확인하세요.', 'CHECK', 'OPEN');
+  (2, 1, '바닥 물기 재확인', '점심 피크 전 바닥 미끄럼 위험 여부를 확인하세요.', 'CHECK', 'OPEN'),
+  (3, 7, '냉장 보관 온도 즉시 재점검', '보관 온도 이상이 감지되었습니다 — 식자재 폐기 여부를 오늘 중 확인하세요.', 'URGENT', 'OPEN'),
+  (4, 1105, '바닥 청결 재점검 필요', 'AI 분석에서 바닥 오염 가능성이 높게 감지되었습니다.', 'URGENT', 'OPEN');
 
 INSERT IGNORE INTO risk_assessments
   (risk_assessment_id, store_id, model_version, risk_score, risk_level,

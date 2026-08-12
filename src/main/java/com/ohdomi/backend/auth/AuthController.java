@@ -3,6 +3,7 @@ package com.ohdomi.backend.auth;
 import java.sql.PreparedStatement;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import com.ohdomi.backend.global.ConflictException;
 import com.ohdomi.backend.global.UnauthorizedException;
@@ -47,6 +48,20 @@ public class AuthController {
     @GetMapping("/captcha")
     public CaptchaService.Challenge captcha() {
         return captchaService.generate();
+    }
+
+    // 2026-08-12: 로그인 상태가 React의 useState(메모리)에만 있어서 새로고침만 해도 로그인
+    // 화면으로 튕기던 문제 — SESSION 쿠키는 여전히 유효한데 프런트가 그걸 확인할 방법이
+    // 없었음. /api/auth/me는 SessionAuthFilter가 이미 쿠키를 검증해 CurrentUser를 request에
+    // 넣어준 뒤에만 도달하므로(그 전에 401), 여기선 표시용 이름/전화번호만 채워서 반환.
+    @GetMapping("/me")
+    public LoginResponse me(HttpServletRequest request) {
+        CurrentUser current = (CurrentUser) request.getAttribute(SessionAuthFilter.CURRENT_USER_ATTR);
+        if (current == null) throw new UnauthorizedException("로그인이 필요합니다.");
+        Map<String, Object> row = jdbc.queryForMap(
+                "SELECT name, phone FROM app_users WHERE user_id = ?", current.userId());
+        return new LoginResponse(current.userId(), current.loginId(), (String) row.get("name"),
+                current.role(), (String) row.get("phone"), current.storeId());
     }
 
     @PostMapping("/login")

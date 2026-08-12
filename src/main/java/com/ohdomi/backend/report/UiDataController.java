@@ -272,12 +272,21 @@ public class UiDataController {
     @GetMapping("/admin/hygiene")
     public Map<String, Object> adminHygiene() {
         // 2026-08-08: adminStores()와 같은 이유로 store_code 기반 "임포트" 표식을 같이 노출.
+        // 2026-08-12: "최신 점검"을 여기만 MAX(inspection_id)로 판단하고 있었음 — 점주 화면
+        // (hygiene())과 adminStores()는 둘 다 inspected_at DESC로 판단하는데, 데모 매장은
+        // 점검 3건이 ID 오름차순·시간 내림차순으로 들어가 있어(가장 최근 점검이 가장 작은
+        // inspection_id) 이 화면만 다른 매장을 "최신"으로 골라 점수·상태가 서로 어긋났음
+        // (예: 강남역점이 여기선 81점/주의, 다른 화면에선 92점/양호로 따로 보임). 나머지
+        // 두 곳과 같은 기준으로 통일.
         List<Map<String, Object>> stores = jdbc.query("""
                 SELECT s.name,u.name,s.region,h.score,h.status,h.inspected_at,h.summary,h.reviewer,h.inspection_id,
                        (SELECT COUNT(*) FROM hygiene_images i WHERE i.inspection_id=h.inspection_id), s.store_code
                 FROM hygiene_inspections h JOIN stores s ON s.store_id=h.store_id
                 JOIN app_users u ON u.user_id=s.owner_user_id
-                WHERE h.inspection_id=(SELECT MAX(x.inspection_id) FROM hygiene_inspections x WHERE x.store_id=h.store_id)
+                WHERE h.inspection_id=(
+                    SELECT x.inspection_id FROM hygiene_inspections x
+                    WHERE x.store_id=h.store_id ORDER BY x.inspected_at DESC LIMIT 1
+                )
                 ORDER BY h.score
                 """, (rs, n) -> {
             String storeCode = rs.getString(11);
@@ -299,12 +308,34 @@ public class UiDataController {
                 """, (rs, n) -> m("store", rs.getString(1), "title", rs.getString(2) + " 점검 사진",
                 "uploadedAt", dateTime(rs.getTimestamp(3)), "result", rs.getString(4),
                 "status", "URGENT".equals(rs.getString(5)) ? "긴급 검토" : "검토 필요"));
-        List<Map<String, Object>> actions = jdbc.query("""
+        // 2026-08-12: "매장별 점검 현황"엔 긴급/주의로 뜨는데 "본사 조치 필요 항목"엔 안
+        // 보이는 매장이 있다는 리포트 — 원인은 이 목록이 improvement_tasks(수동 등록 개선과제)
+        // 테이블만 봤기 때문. hygiene_inspections.status(위 stores 목록과 동일 출처)가 GOOD이
+        // 아닌 매장은 전부 포함하도록 바꾸고, 등록된 개선과제가 있으면 그 구체적 내용을,
+        // 없으면 점검 자체에서 나온 요약(issue)으로 항목을 만들어 두 화면이 항상 일치하게 함.
+        List<Map<String, Object>> taskRows = jdbc.query("""
                 SELECT s.name,t.title,t.description,t.priority FROM improvement_tasks t
                 JOIN hygiene_inspections h ON h.inspection_id=t.inspection_id JOIN stores s ON s.store_id=h.store_id
-                WHERE t.status='OPEN' ORDER BY t.improvement_task_id DESC LIMIT 10
-                """, (rs, n) -> m("store", rs.getString(1), "action", rs.getString(2),
+                WHERE t.status='OPEN' ORDER BY t.improvement_task_id DESC
+                """, (rs, n) -> m("store", rs.getString(1), "title", rs.getString(2),
                 "description", rs.getString(3), "priority", priorityKo(rs.getString(4))));
+        Map<String, List<Map<String, Object>>> tasksByStore = taskRows.stream()
+                .collect(java.util.stream.Collectors.groupingBy(t -> (String) t.get("store")));
+        List<Map<String, Object>> actions = new java.util.ArrayList<>();
+        for (Map<String, Object> s : stores) {
+            if ("양호".equals(s.get("status"))) continue;
+            List<Map<String, Object>> tasksForStore = tasksByStore.get(s.get("name"));
+            if (tasksForStore != null && !tasksForStore.isEmpty()) {
+                for (Map<String, Object> t : tasksForStore) {
+                    actions.add(m("store", s.get("name"), "action", t.get("title"),
+                            "description", t.get("description"), "priority", t.get("priority")));
+                }
+            } else {
+                actions.add(m("store", s.get("name"), "action", s.get("issue"),
+                        "description", "아직 개선과제가 등록되지 않았습니다 — AI 위생 점검 결과 기준입니다. 최근 점검: " + s.get("lastCheckedAt"),
+                        "priority", s.get("status")));
+            }
+        }
         // 2026-08-08: 216개 임포트 매장의 더미 점검(전부 오늘 날짜, CURRENT_TIMESTAMP)이
         // 섞이면 "오늘" 막대가 더미 평균으로 왜곡된다 — 이 추이 차트는 실제 매장 이력을
         // 보려는 목적이라 임포트 매장은 제외.
