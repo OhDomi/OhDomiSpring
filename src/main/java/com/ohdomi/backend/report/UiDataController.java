@@ -193,7 +193,8 @@ public class UiDataController {
                   (SELECT h.inspected_at FROM hygiene_inspections h WHERE h.store_id=s.store_id ORDER BY h.inspected_at DESC LIMIT 1),
                   COALESCE((SELECT h.summary FROM hygiene_inspections h WHERE h.store_id=s.store_id ORDER BY h.inspected_at DESC LIMIT 1),'특이사항 없음'),
                   s.store_code,
-                  (SELECT COUNT(*) FROM customer_orders o WHERE o.store_id=s.store_id)
+                  (SELECT COUNT(*) FROM customer_orders o WHERE o.store_id=s.store_id),
+                  (SELECT r.main_reason FROM risk_assessments r WHERE r.store_id=s.store_id ORDER BY r.assessed_at DESC LIMIT 1)
                 FROM stores s JOIN app_users u ON u.user_id=s.owner_user_id ORDER BY s.store_id
                 """, (rs, n) -> {
             String storeCode = rs.getString(13);
@@ -206,11 +207,16 @@ public class UiDataController {
                     "contractStatus", rs.getDate(7).toLocalDate().isBefore(LocalDate.now().plusMonths(6)) ? "재계약 검토" : "정상",
                     "lastInspection", dateTime(rs.getTimestamp(11)), "issue", rs.getString(12),
                     "phone", rs.getString(6), "address", rs.getString(5),
-                    "storeCode", storeCode, "source", imported ? "IMPORTED" : "DEMO");
+                    "storeCode", storeCode, "source", imported ? "IMPORTED" : "DEMO",
+                    "riskReason", rs.getString(15));
         });
         long risks = stores.stream().filter(s -> "높음".equals(s.get("risk"))).count();
+        // 2026-08-12: 조치 항목 description이 전부 "본사 확인이 필요한 MySQL 기반 운영
+        // 지표입니다." 한 줄로 동일해 데모에서 눈에 띄게 부자연스러웠음 — risk_assessments의
+        // main_reason(실제 위험 사유 문장)이 있으면 그걸 쓰고, 없는 매장만 기존 문구로 대체.
         List<Map<String, Object>> actions = stores.stream().filter(s -> !"안전".equals(s.get("risk"))).map(s -> m(
-                "store", s.get("name"), "title", s.get("issue"), "description", "본사 확인이 필요한 MySQL 기반 운영 지표입니다.",
+                "store", s.get("name"), "title", s.get("issue"),
+                "description", s.get("riskReason") != null ? s.get("riskReason") : "본사 확인이 필요한 MySQL 기반 운영 지표입니다.",
                 "priority", "높음".equals(s.get("risk")) ? "긴급" : "주의")).toList();
         // 2026-08-08: "서울특별시" 카드가 여러 개 따로 뜨는 버그 발견·수정 — GROUP BY를
         // region 원본 전체(예: "서울특별시 종로구")로 하고 표시할 때만 시도명만 잘라 썼더니,
@@ -355,10 +361,11 @@ public class UiDataController {
                 "adminSalesInsights", List.of(m("title", "MySQL 통합 매출 분석", "description", ranking.size() + "개 매장의 주문을 집계했습니다.", "type", "info")));
     }
 
-    // 실제 월별 매출 추이를 보여주기 위해 최근 5개월(당월 포함)을 달력 월 단위로 집계 —
-    // 이전엔 당월 하나만 담긴 리스트였음(2026-08-10). 주문이 없는 달은 0으로 채운다.
+    // 작년 8월부터 당월까지(13개월) 달력 월 단위로 집계(2026-08-12, 5개월→13개월 확장 —
+    // 이전엔 당월 하나만 담긴 리스트였음, 2026-08-10). 주문이 없는 달은 0으로 채운다.
+    // 두 해에 걸치는 범위라 "8월"만으로는 2025-08/2026-08이 같은 라벨이 되므로 "yy.MM"로 표기.
     private List<Map<String, Object>> monthlySalesTrend() {
-        LocalDate start = LocalDate.now().minusMonths(4).withDayOfMonth(1);
+        LocalDate start = LocalDate.now().minusMonths(12).withDayOfMonth(1);
         List<Map<String, Object>> rows = jdbc.query("""
                 SELECT DATE_FORMAT(ordered_at, '%Y-%m') ym, SUM(total_amount) total
                 FROM customer_orders WHERE ordered_at >= ?
@@ -369,10 +376,10 @@ public class UiDataController {
         for (Map<String, Object> row : rows) byMonth.put((String) row.get("ym"), (BigDecimal) row.get("total"));
 
         List<Map<String, Object>> trend = new java.util.ArrayList<>();
-        for (int i = 4; i >= 0; i--) {
+        for (int i = 12; i >= 0; i--) {
             LocalDate month = LocalDate.now().minusMonths(i);
             BigDecimal total = byMonth.getOrDefault(month.format(DateTimeFormatter.ofPattern("yyyy-MM")), BigDecimal.ZERO);
-            trend.add(m("month", month.getMonthValue() + "월", "sales", total.divide(BigDecimal.valueOf(1_000_000), 0, RoundingMode.HALF_UP)));
+            trend.add(m("month", month.format(DateTimeFormatter.ofPattern("yy.MM")), "sales", total.divide(BigDecimal.valueOf(1_000_000), 0, RoundingMode.HALF_UP)));
         }
         return trend;
     }
