@@ -45,6 +45,11 @@ public class SessionAuthFilter extends OncePerRequestFilter {
             return;
         }
 
+        if ("OPTIONS".equals(request.getMethod())) {
+            chain.doFilter(request, response);
+            return;
+        }
+
         // CSRF mitigation: a cross-site <form> POST can carry the session cookie automatically,
         // but it cannot set an arbitrary request header — only same-origin XHR/fetch can. Every
         // state-changing call from this app's own frontend already sends this header (see
