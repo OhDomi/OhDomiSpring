@@ -400,9 +400,15 @@ public class UiDataController {
                     "growth", signedPercent(growth), "status", growth.signum() < 0 ? "주의" : "양호",
                     "address", rs.getString(7));
         }, currentPeriodStart, currentPeriodStart, previousPeriodStart, currentPeriodStart);
-        BigDecimal totalSales = ranking.stream().map(r -> money((String) r.get("sales"))).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal monthlyTotalSales = ranking.stream().map(r -> money((String) r.get("sales"))).reduce(BigDecimal.ZERO, BigDecimal::add);
+        Map<String, Object> todayTotals = aggregate("""
+                SELECT COALESCE(SUM(total_amount),0) sales, COUNT(*) orders
+                FROM customer_orders WHERE DATE(ordered_at) = CURDATE()
+                """);
+        BigDecimal todayTotalSales = decimal(todayTotals.get("sales"));
+        long todayOrders = ((Number) todayTotals.get("orders")).longValue();
         long orders = jdbc.queryForObject("SELECT COUNT(*) FROM customer_orders", Long.class);
-        BigDecimal average = orders == 0 ? BigDecimal.ZERO : totalSales.divide(BigDecimal.valueOf(orders), 0, RoundingMode.HALF_UP);
+        BigDecimal average = todayOrders == 0 ? BigDecimal.ZERO : todayTotalSales.divide(BigDecimal.valueOf(todayOrders), 0, RoundingMode.HALF_UP);
         // 2026-08-12: "지역별 매출 비교"에 기간 필터(1/3/6/12개월) 추가 요청 — regionMonths로
         // 지역 매출 합계를 기간 필터링. rate(비중 %)의 분모도 반드시 같은 기간으로 다시 합산한
         // regionTotalSales를 써야 함 — 예전엔 이 필터 없이 전체기간 합계를, 위 29일짜리
@@ -426,7 +432,7 @@ public class UiDataController {
         List<Map<String, Object>> weak = ranking.stream().filter(r -> "주의".equals(r.get("status"))).map(r -> m(
                 "store", r.get("store"), "issue", "매출 변화율 감소", "description", r.get("growth") + "의 변화율이 기록되었습니다.",
                 "priority", "주의")).toList();
-        return m("adminSalesSummary", m("todayTotalSales", won(totalSales), "monthlyTotalSales", won(totalSales),
+        return m("adminSalesSummary", m("todayTotalSales", won(todayTotalSales), "monthlyTotalSales", won(monthlyTotalSales),
                         "totalOrders", orders + "건", "averageOrderPrice", won(average), "growthRate", "0%", "targetRate", 0),
                 "monthlySalesTrend", monthlySalesTrend(),
                 "regionSales", regions, "storeSalesRanking", ranking, "weakStores", weak,
