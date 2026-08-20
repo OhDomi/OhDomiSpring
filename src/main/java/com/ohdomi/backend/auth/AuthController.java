@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseCookie;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -100,11 +101,14 @@ public class AuthController {
 
         String token = sessionManager.create(
                 new CurrentUser(user.userId(), user.loginId(), user.role(), user.storeId()));
-        Cookie cookie = new Cookie(SessionAuthFilter.COOKIE_NAME, token);
-        cookie.setHttpOnly(true);
-        cookie.setPath("/");
-        cookie.setMaxAge(SESSION_COOKIE_MAX_AGE_SECONDS);
-        response.addCookie(cookie);
+        ResponseCookie cookie = ResponseCookie.from(SessionAuthFilter.COOKIE_NAME, token)
+                .httpOnly(true)      // JS에서 쿠키 못 건드리게 (보안)
+                .secure(true)        // https에서만 전송 — SameSite=None의 필수 짝
+                .path("/")           // 사이트 전체에서 쿠키 유효
+                .maxAge(SESSION_COOKIE_MAX_AGE_SECONDS)  // 유효시간 (기존 값 그대로)
+                .sameSite("None")    // 크로스도메인 허용 (401 해결의 핵심)
+                .build();
+        response.addHeader("Set-Cookie", cookie.toString());
 
         return new LoginResponse(user.userId(), user.loginId(), user.name(), user.role(),
                 user.phone(), user.storeId());

@@ -14,7 +14,14 @@ public class CorsConfig implements WebMvcConfigurer {
         // page's own perspective, e.g. through the Vite dev proxy) — so the team's cloudflare
         // tunnel domain has to be allow-listed here too, matching closure-risk-model's CORS setup.
         registry.addMapping("/api/**")
-                .allowedOriginPatterns("http://localhost:*", "http://127.0.0.1:*", "https://*.trycloudflare.com", "https://*.ts.net")
+                .allowedOriginPatterns(
+                        "http://localhost:*",
+                        "http://127.0.0.1:*",
+                        "https://*.trycloudflare.com",
+                        "https://*.ts.net",
+                        "https://ohdomi.duckdns.org",
+                        "http://ohdomi-web-0723.s3-website-us-east-1.amazonaws.com"
+                )
                 .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .allowCredentials(true);
