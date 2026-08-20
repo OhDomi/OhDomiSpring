@@ -55,7 +55,7 @@ public class SessionAuthFilter extends OncePerRequestFilter {
         // state-changing call from this app's own frontend already sends this header (see
         // apiUrl()/api() helpers), so this rejects the classic form-based CSRF vector for free.
         if (!isSafeMethod(request.getMethod()) && !"XMLHttpRequest".equals(request.getHeader("X-Requested-With"))) {
-            reject(response, HttpServletResponse.SC_FORBIDDEN, "잘못된 요청입니다.");
+            reject(response, HttpServletResponse.SC_FORBIDDEN, "CSRF_REJECTED", "잘못된 요청입니다.");
             return;
         }
 
@@ -66,17 +66,17 @@ public class SessionAuthFilter extends OncePerRequestFilter {
 
         CurrentUser user = sessionManager.resolve(readCookie(request));
         if (user == null) {
-            reject(response, HttpServletResponse.SC_UNAUTHORIZED, "로그인이 필요합니다.");
+            reject(response, HttpServletResponse.SC_UNAUTHORIZED, "UNAUTHENTICATED", "로그인이 필요합니다.");
             return;
         }
         if (path.contains("/admin") && !"ADMIN".equals(user.role())) {
-            reject(response, HttpServletResponse.SC_FORBIDDEN, "관리자 권한이 필요합니다.");
+            reject(response, HttpServletResponse.SC_FORBIDDEN, "ADMIN_REQUIRED", "관리자 권한이 필요합니다.");
             return;
         }
         if ("OWNER".equals(user.role())) {
             Matcher matcher = STORE_ID_PATTERN.matcher(path);
             if (matcher.matches() && !matcher.group(1).equals(String.valueOf(user.storeId()))) {
-                reject(response, HttpServletResponse.SC_FORBIDDEN, "다른 매장에 접근할 수 없습니다.");
+                reject(response, HttpServletResponse.SC_FORBIDDEN, "STORE_ACCESS_DENIED", "다른 매장에 접근할 수 없습니다.");
                 return;
             }
         }
@@ -103,9 +103,10 @@ public class SessionAuthFilter extends OncePerRequestFilter {
         return null;
     }
 
-    private void reject(HttpServletResponse response, int status, String message) throws IOException {
+    private void reject(HttpServletResponse response, int status, String errorCode, String message) throws IOException {
         response.setStatus(status);
         response.setContentType("application/json;charset=UTF-8");
-        response.getWriter().write("{\"status\":" + status + ",\"message\":\"" + message + "\"}");
+        response.getWriter().write("{\"status\":" + status + ",\"error_code\":\"" + errorCode
+                + "\",\"message\":\"" + message + "\"}");
     }
 }
