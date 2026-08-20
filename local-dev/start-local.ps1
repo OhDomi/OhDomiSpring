@@ -87,7 +87,7 @@ if (Test-Path (Join-Path $modelDir 'models')) {
 # ---------- 5. React (새 창) ----------
 Write-Step "React 개발 서버(5173) 새 창에서 시작"
 $reactDir = Join-Path $BaseDir 'OhDomiReact'
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$reactDir'; npm run dev"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$reactDir'; npm run dev -- --host"
 Write-Ok "실행 요청함"
 
 Write-Step "완료"
