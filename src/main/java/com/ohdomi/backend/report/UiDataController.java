@@ -145,16 +145,42 @@ public class UiDataController {
                 "recommendedOrders", recommendations, "recentOrders", recent, "aiOrderInsights", insights);
     }
 
-    @GetMapping("/stores/{storeId}/sales")
+        @GetMapping("/stores/{storeId}/sales")
     public Map<String, Object> sales(@PathVariable long storeId) {
-        Map<String, Object> totals = aggregate("SELECT COALESCE(SUM(total_amount),0) sales,COUNT(*) orders FROM customer_orders WHERE store_id=?", storeId);
-        BigDecimal totalSales = decimal(totals.get("sales"));
-        long totalOrders = ((Number) totals.get("orders")).longValue();
+        LocalDate today = LocalDate.now();
+        LocalDate weekStart = today.minusDays(6);
+        LocalDate monthStart = today.withDayOfMonth(1);
+
+        Map<String, Object> todayTotals = aggregate("""
+                SELECT COALESCE(SUM(total_amount),0) sales, COUNT(*) orders
+                FROM customer_orders
+                WHERE store_id=? AND ordered_at >= ? AND ordered_at < ?
+                """, storeId, Timestamp.valueOf(today.atStartOfDay()), Timestamp.valueOf(today.plusDays(1).atStartOfDay()));
+        BigDecimal todaySales = decimal(todayTotals.get("sales"));
+        long todayOrders = ((Number) todayTotals.get("orders")).longValue();
+
+        Map<String, Object> weekTotals = aggregate("""
+                SELECT COALESCE(SUM(total_amount),0) sales
+                FROM customer_orders
+                WHERE store_id=? AND ordered_at >= ? AND ordered_at < ?
+                """, storeId, Timestamp.valueOf(weekStart.atStartOfDay()), Timestamp.valueOf(today.plusDays(1).atStartOfDay()));
+        BigDecimal weekSales = decimal(weekTotals.get("sales"));
+
+        Map<String, Object> monthTotals = aggregate("""
+                SELECT COALESCE(SUM(total_amount),0) sales
+                FROM customer_orders
+                WHERE store_id=? AND ordered_at >= ? AND ordered_at < ?
+                """, storeId, Timestamp.valueOf(monthStart.atStartOfDay()), Timestamp.valueOf(today.plusDays(1).atStartOfDay()));
+        BigDecimal monthlySales = decimal(monthTotals.get("sales"));
+
         List<Map<String, Object>> hourly = jdbc.query("""
                 SELECT HOUR(ordered_at),COALESCE(SUM(total_amount),0) FROM customer_orders
-                WHERE store_id=? GROUP BY HOUR(ordered_at) ORDER BY HOUR(ordered_at)
+                WHERE store_id=? AND ordered_at >= ? AND ordered_at < ?
+                GROUP BY HOUR(ordered_at) ORDER BY HOUR(ordered_at)
                 """, (rs, n) -> m("time", String.format("%02d시", rs.getInt(1)),
-                "sales", rs.getBigDecimal(2).divide(BigDecimal.valueOf(10_000), 0, RoundingMode.HALF_UP)), storeId);
+                "sales", rs.getBigDecimal(2).divide(BigDecimal.valueOf(10_000), 0, RoundingMode.HALF_UP)),
+                storeId, Timestamp.valueOf(today.atStartOfDay()), Timestamp.valueOf(today.plusDays(1).atStartOfDay()));
+
         List<Map<String, Object>> menus = jdbc.query("""
                 SELECT m.name,m.category,SUM(oi.quantity),SUM(oi.quantity*oi.unit_price)
                 FROM customer_order_items oi JOIN customer_orders o ON o.customer_order_id=oi.customer_order_id
@@ -166,17 +192,17 @@ public class UiDataController {
                 SELECT channel,SUM(total_amount) FROM customer_orders WHERE store_id=? GROUP BY channel
                 """, (rs, n) -> {
             BigDecimal value = rs.getBigDecimal(2);
-            int rate = totalSales.signum() == 0 ? 0 : value.multiply(BigDecimal.valueOf(100))
-                    .divide(totalSales, 0, RoundingMode.HALF_UP).intValue();
+            int rate = monthlySales.signum() == 0 ? 0 : value.multiply(BigDecimal.valueOf(100))
+                    .divide(monthlySales, 0, RoundingMode.HALF_UP).intValue();
             return m("channel", channelKo(rs.getString(1)), "sales", won(value), "rate", rate);
         }, storeId);
-        BigDecimal average = totalOrders == 0 ? BigDecimal.ZERO : totalSales.divide(BigDecimal.valueOf(totalOrders), 0, RoundingMode.HALF_UP);
-        return m("salesSummary", m("todaySales", won(totalSales), "todayOrders", totalOrders,
-                        "averageOrderPrice", won(average), "monthlySales", won(totalSales),
-                        "monthlyTarget", won(storeTarget(storeId)), "targetRate", targetRate(totalSales, storeTarget(storeId))),
+        BigDecimal average = todayOrders == 0 ? BigDecimal.ZERO : todaySales.divide(BigDecimal.valueOf(todayOrders), 0, RoundingMode.HALF_UP);
+        return m("salesSummary", m("todaySales", won(todaySales), "todayOrders", todayOrders,
+                        "averageOrderPrice", won(average), "weeklySales", won(weekSales), "monthlySales", won(monthlySales),
+                        "monthlyTarget", won(storeTarget(storeId)), "targetRate", targetRate(monthlySales, storeTarget(storeId))),
                 "hourlySales", hourly, "menuRanking", menus, "channelSales", channels,
                 "aiInsights", List.of(m("title", "MySQL 매출 데이터 분석", "description",
-                        totalOrders + "건의 주문 데이터를 기준으로 집계했습니다.", "type", "info")));
+                        todayOrders + "건의 주문 데이터를 기준으로 집계했습니다.", "type", "info")));
     }
 
     @GetMapping("/admin/stores")
