@@ -409,6 +409,8 @@ public class UiDataController {
         long todayOrders = ((Number) todayTotals.get("orders")).longValue();
         long orders = jdbc.queryForObject("SELECT COUNT(*) FROM customer_orders", Long.class);
         BigDecimal average = todayOrders == 0 ? BigDecimal.ZERO : todayTotalSales.divide(BigDecimal.valueOf(todayOrders), 0, RoundingMode.HALF_UP);
+        BigDecimal totalTarget = jdbc.queryForObject("SELECT COALESCE(SUM(monthly_sales_target),0) FROM stores", BigDecimal.class);
+        int monthlyTargetRate = targetRate(monthlyTotalSales, totalTarget);
         // 2026-08-12: "지역별 매출 비교"에 기간 필터(1/3/6/12개월) 추가 요청 — regionMonths로
         // 지역 매출 합계를 기간 필터링. rate(비중 %)의 분모도 반드시 같은 기간으로 다시 합산한
         // regionTotalSales를 써야 함 — 예전엔 이 필터 없이 전체기간 합계를, 위 29일짜리
@@ -433,7 +435,7 @@ public class UiDataController {
                 "store", r.get("store"), "issue", "매출 변화율 감소", "description", r.get("growth") + "의 변화율이 기록되었습니다.",
                 "priority", "주의")).toList();
         return m("adminSalesSummary", m("todayTotalSales", won(todayTotalSales), "monthlyTotalSales", won(monthlyTotalSales),
-                        "totalOrders", orders + "건", "averageOrderPrice", won(average), "growthRate", "0%", "targetRate", 0),
+                "totalOrders", orders + "건", "averageOrderPrice", won(average), "growthRate", "0%", "targetRate", monthlyTargetRate),
                 "monthlySalesTrend", monthlySalesTrend(),
                 "regionSales", regions, "storeSalesRanking", ranking, "weakStores", weak,
                 "adminSalesInsights", List.of(m("title", "MySQL 통합 매출 분석", "description", ranking.size() + "개 매장의 주문을 집계했습니다.", "type", "info")));
