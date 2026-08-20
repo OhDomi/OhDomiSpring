@@ -214,13 +214,13 @@ public class UiDataController {
         // 없음"이 구분이 안 돼, 임포트 매장 216개가 전부 매출 0원짜리 매장처럼 보이는 문제.
         List<Map<String, Object>> stores = jdbc.query("""
                 SELECT s.store_id,s.name,u.name,s.region,s.address,s.phone,s.contract_ends_on,
-                  COALESCE((SELECT SUM(o.total_amount) FROM customer_orders o WHERE o.store_id=s.store_id),0),
+                  COALESCE((SELECT SUM(o.total_amount) FROM customer_orders o WHERE o.store_id=s.store_id AND DATE(o.ordered_at) = CURDATE()),0),
                   COALESCE((SELECT h.score FROM hygiene_inspections h WHERE h.store_id=s.store_id ORDER BY h.inspected_at DESC LIMIT 1),0),
                   COALESCE((SELECT r.risk_level FROM risk_assessments r WHERE r.store_id=s.store_id ORDER BY r.assessed_at DESC LIMIT 1),1),
                   (SELECT h.inspected_at FROM hygiene_inspections h WHERE h.store_id=s.store_id ORDER BY h.inspected_at DESC LIMIT 1),
                   COALESCE((SELECT h.summary FROM hygiene_inspections h WHERE h.store_id=s.store_id ORDER BY h.inspected_at DESC LIMIT 1),'특이사항 없음'),
                   s.store_code,
-                  (SELECT COUNT(*) FROM customer_orders o WHERE o.store_id=s.store_id),
+                  (SELECT COUNT(*) FROM customer_orders o WHERE o.store_id=s.store_id AND DATE(o.ordered_at) = CURDATE()),
                   (SELECT r.main_reason FROM risk_assessments r WHERE r.store_id=s.store_id ORDER BY r.assessed_at DESC LIMIT 1)
                 FROM stores s JOIN app_users u ON u.user_id=s.owner_user_id ORDER BY s.store_id
                 """, (rs, n) -> {
