@@ -169,9 +169,13 @@ public class UiDataController {
         // 2026-08-21: 대시보드 "이번 주 매출" 위젯이 시간대별(hourly, 오늘 하루뿐)을 그대로
         // 갖다 써서 "최근 7일"이라는 라벨과 실제 데이터(하루치)가 안 맞던 문제 — period
         // 파라미터(week/month/year)로 요일별/일별/월별 집계를 선택할 수 있게 함.
-        List<Map<String, Object>> chartTrend = "year".equals(period)
-                ? storeMonthlyTrend(storeId)
-                : storeDailyTrend(storeId, "month".equals(period) ? 29 : 6);
+        List<Map<String, Object>> chartTrend = switch (period) {
+            case "year" -> storeMonthlyTrend(storeId);
+            // 2026-08-21: "1개월"을 일별 30개 막대로 보여주니 너무 빽빽하다는 리포트 —
+            // 7일/1년(막대 7~12개)과 밀도를 맞추기 위해 1개월은 주 단위 4개 묶음으로.
+            case "month" -> storeWeeklyTrend(storeId, 4);
+            default -> storeDailyTrend(storeId, 6);
+        };
 
         Map<String, Object> monthTotals = aggregate("""
                 SELECT COALESCE(SUM(total_amount),0) sales
@@ -489,6 +493,34 @@ public class UiDataController {
             LocalDate day = today.minusDays(i);
             BigDecimal total = byDay.getOrDefault(day, BigDecimal.ZERO);
             trend.add(m("time", day.format(DateTimeFormatter.ofPattern("MM/dd")), "sales", total.longValue()));
+        }
+        return trend;
+    }
+
+    // 점주 대시보드 "1개월" 기간 선택용 — 최근 N주를 7일 단위로 묶어서 집계(2026-08-21,
+    // 일별 30개 막대가 너무 빽빽하다는 리포트로 추가). 각 구간 시작~끝 날짜를 라벨로 표시.
+    private List<Map<String, Object>> storeWeeklyTrend(long storeId, int weeks) {
+        LocalDate today = LocalDate.now();
+        LocalDate start = today.minusDays((long) weeks * 7 - 1);
+        List<Map<String, Object>> rows = jdbc.query("""
+                SELECT DATE(ordered_at) d, SUM(total_amount) total FROM customer_orders
+                WHERE store_id=? AND ordered_at >= ? AND ordered_at < ?
+                GROUP BY DATE(ordered_at)
+                """, (rs, n) -> m("d", rs.getDate(1).toLocalDate(), "total", rs.getBigDecimal(2)),
+                storeId, Timestamp.valueOf(start.atStartOfDay()), Timestamp.valueOf(today.plusDays(1).atStartOfDay()));
+        Map<LocalDate, BigDecimal> byDay = new java.util.HashMap<>();
+        for (Map<String, Object> row : rows) byDay.put((LocalDate) row.get("d"), (BigDecimal) row.get("total"));
+
+        List<Map<String, Object>> trend = new java.util.ArrayList<>();
+        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("MM/dd");
+        for (int w = weeks - 1; w >= 0; w--) {
+            LocalDate weekEnd = today.minusDays((long) w * 7);
+            LocalDate weekStartDay = weekEnd.minusDays(6);
+            BigDecimal total = BigDecimal.ZERO;
+            for (LocalDate d = weekStartDay; !d.isAfter(weekEnd); d = d.plusDays(1)) {
+                total = total.add(byDay.getOrDefault(d, BigDecimal.ZERO));
+            }
+            trend.add(m("time", weekStartDay.format(fmt) + "~" + weekEnd.format(fmt), "sales", total.longValue()));
         }
         return trend;
     }
