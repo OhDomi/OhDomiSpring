@@ -80,14 +80,6 @@ macOS 또는 Linux:
 
 기본 설정에서는 시작할 때 `schema.sql`, `schema-mysql-migrations.sql`, `data.sql`을 순서대로 적용합니다. 기존 DB를 그대로 사용하려면 `SPRING_SQL_INIT_MODE=never`를 지정할 수 있지만, 빈 DB에서 이 값을 사용하면 테이블과 기본 데이터가 만들어지지 않습니다.
 
-### 통합 실행
-
-OhDomi의 네 저장소가 같은 상위 작업 폴더에 준비되어 있다면 통합 실행 스크립트를 사용할 수 있습니다.
-
-```powershell
-..\start-all-servers.bat --check
-..\start-all-servers.bat
-```
 
 통합 스크립트는 Hygiene AI `:8000`, Risk API `:8050`, Spring `:8080`, React `:5173`을 각각 별도 창에서 실행합니다. 현재 스크립트는 기존 로컬 DB 보존을 위해 `SPRING_SQL_INIT_MODE=never`를 지정하므로 최초 DB 구성은 먼저 단독 실행으로 완료하세요.
 
