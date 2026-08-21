@@ -1,7 +1,8 @@
 """demo 계정 매장(1091)의 "이번 주 매출" 위젯이 하루 38,000원(주문 1건)짜리로 보여서
-너무 적다는 리포트(2026-08-21) — 최근 7일을 매장당 하루 다건(20~35건) 실거래처럼
-재생성한다. 월 매출목표(₩34,872,787) 대비 하루 평균 매출이 자연스러운 수준(80~110%
-달성률)이 되도록 설계. 백원 단위 금액을 섞어 반올림된 느낌을 없앰.
+너무 적다는 리포트(2026-08-21) — 최근 30일(주간/월간 기간선택 둘 다 커버)을 매장당
+하루 다건(20~35건) 실거래처럼 재생성한다. 월 매출목표(₩34,872,787) 대비 하루 평균
+매출이 자연스러운 수준(80~110% 달성률)이 되도록 설계. 백원 단위 금액을 섞어 반올림된
+느낌을 없앰.
 """
 import hashlib
 import random
@@ -18,12 +19,12 @@ seed = int(hashlib.sha1(f"demo-store-{STORE_ID}-realistic-week".encode()).hexdig
 rng = random.Random(seed)
 
 today = date.today()
-days = [today - timedelta(days=i) for i in range(6, -1, -1)]
+days = [today - timedelta(days=i) for i in range(29, -1, -1)]
 
 lines = [
-    "-- demo 계정 매장(1091)의 최근 7일치를 하루 다건 실거래처럼 재생성 (2026-08-21,",
+    "-- demo 계정 매장(1091)의 최근 30일치를 하루 다건 실거래처럼 재생성 (2026-08-21,",
     "-- scripts/gen_demo_store_realistic_week.py) — 기존 '오늘 매출 38,000원(1건)'이 너무",
-    "-- 적어보인다는 리포트 해결. 백원 단위 섞어 반올림 느낌 제거.",
+    "-- 적어보인다는 리포트 해결 + 1개월 기간선택 데이터도 채움. 백원 단위 섞어 반올림 느낌 제거.",
     "START TRANSACTION;",
     "",
     f"DELETE oi FROM customer_order_items oi JOIN customer_orders o ON o.customer_order_id=oi.customer_order_id"

@@ -35,7 +35,7 @@ public class UiDataController {
     @GetMapping("/stores/{storeId}/overview")
     public Map<String, Object> storeOverview(@PathVariable long storeId) {
         return m("management", storeManagement(storeId), "hygiene", hygiene(storeId),
-                "orders", orders(storeId), "sales", sales(storeId));
+                "orders", orders(storeId), "sales", sales(storeId, "week"));
     }
 
     @GetMapping("/admin/overview")
@@ -146,7 +146,7 @@ public class UiDataController {
     }
 
         @GetMapping("/stores/{storeId}/sales")
-    public Map<String, Object> sales(@PathVariable long storeId) {
+    public Map<String, Object> sales(@PathVariable long storeId, @RequestParam(defaultValue = "week") String period) {
         LocalDate today = LocalDate.now();
         LocalDate weekStart = today.minusDays(6);
         LocalDate monthStart = today.withDayOfMonth(1);
@@ -167,22 +167,11 @@ public class UiDataController {
         BigDecimal weekSales = decimal(weekTotals.get("sales"));
 
         // 2026-08-21: 대시보드 "이번 주 매출" 위젯이 시간대별(hourly, 오늘 하루뿐)을 그대로
-        // 갖다 써서 "최근 7일"이라는 라벨과 실제 데이터(하루치)가 안 맞던 문제 — 요일별 7일
-        // 집계를 별도로 만듦. 주문 없는 날도 0으로 채움(monthlySalesTrend()와 동일 패턴).
-        List<Map<String, Object>> dailyRows = jdbc.query("""
-                SELECT DATE(ordered_at) d, SUM(total_amount) total FROM customer_orders
-                WHERE store_id=? AND ordered_at >= ? AND ordered_at < ?
-                GROUP BY DATE(ordered_at)
-                """, (rs, n) -> m("d", rs.getDate(1).toLocalDate(), "total", rs.getBigDecimal(2)),
-                storeId, Timestamp.valueOf(weekStart.atStartOfDay()), Timestamp.valueOf(today.plusDays(1).atStartOfDay()));
-        Map<LocalDate, BigDecimal> byDay = new java.util.HashMap<>();
-        for (Map<String, Object> row : dailyRows) byDay.put((LocalDate) row.get("d"), (BigDecimal) row.get("total"));
-        List<Map<String, Object>> weeklyTrend = new java.util.ArrayList<>();
-        for (int i = 6; i >= 0; i--) {
-            LocalDate day = today.minusDays(i);
-            BigDecimal total = byDay.getOrDefault(day, BigDecimal.ZERO);
-            weeklyTrend.add(m("time", day.format(DateTimeFormatter.ofPattern("MM/dd")), "sales", total.longValue()));
-        }
+        // 갖다 써서 "최근 7일"이라는 라벨과 실제 데이터(하루치)가 안 맞던 문제 — period
+        // 파라미터(week/month/year)로 요일별/일별/월별 집계를 선택할 수 있게 함.
+        List<Map<String, Object>> chartTrend = "year".equals(period)
+                ? storeMonthlyTrend(storeId)
+                : storeDailyTrend(storeId, "month".equals(period) ? 29 : 6);
 
         Map<String, Object> monthTotals = aggregate("""
                 SELECT COALESCE(SUM(total_amount),0) sales
@@ -218,7 +207,7 @@ public class UiDataController {
         return m("salesSummary", m("todaySales", won(todaySales), "todayOrders", todayOrders,
                         "averageOrderPrice", won(average), "weeklySales", won(weekSales), "monthlySales", won(monthlySales),
                         "monthlyTarget", won(storeTarget(storeId)), "targetRate", targetRate(monthlySales, storeTarget(storeId))),
-                "hourlySales", hourly, "weeklySalesTrend", weeklyTrend, "menuRanking", menus, "channelSales", channels,
+                "hourlySales", hourly, "salesTrend", chartTrend, "menuRanking", menus, "channelSales", channels,
                 "aiInsights", List.of(m("title", "MySQL 매출 데이터 분석", "description",
                         todayOrders + "건의 주문 데이터를 기준으로 집계했습니다.", "type", "info")));
     }
@@ -478,6 +467,49 @@ public class UiDataController {
             LocalDate month = LocalDate.now().minusMonths(i);
             BigDecimal total = byMonth.getOrDefault(month.format(DateTimeFormatter.ofPattern("yyyy-MM")), BigDecimal.ZERO);
             trend.add(m("month", month.format(DateTimeFormatter.ofPattern("yy.MM")), "sales", total.divide(BigDecimal.valueOf(1_000_000), 0, RoundingMode.HALF_UP)));
+        }
+        return trend;
+    }
+
+    // 점주 대시보드 "이번 주 매출" 위젯의 기간 선택(7일/1개월/1년, 2026-08-21) — 요일별/
+    // 일별 집계. 주문 없는 날도 0으로 채운다(monthlySalesTrend()와 동일 패턴).
+    private List<Map<String, Object>> storeDailyTrend(long storeId, int daysBack) {
+        LocalDate today = LocalDate.now();
+        LocalDate start = today.minusDays(daysBack);
+        List<Map<String, Object>> rows = jdbc.query("""
+                SELECT DATE(ordered_at) d, SUM(total_amount) total FROM customer_orders
+                WHERE store_id=? AND ordered_at >= ? AND ordered_at < ?
+                GROUP BY DATE(ordered_at)
+                """, (rs, n) -> m("d", rs.getDate(1).toLocalDate(), "total", rs.getBigDecimal(2)),
+                storeId, Timestamp.valueOf(start.atStartOfDay()), Timestamp.valueOf(today.plusDays(1).atStartOfDay()));
+        Map<LocalDate, BigDecimal> byDay = new java.util.HashMap<>();
+        for (Map<String, Object> row : rows) byDay.put((LocalDate) row.get("d"), (BigDecimal) row.get("total"));
+        List<Map<String, Object>> trend = new java.util.ArrayList<>();
+        for (int i = daysBack; i >= 0; i--) {
+            LocalDate day = today.minusDays(i);
+            BigDecimal total = byDay.getOrDefault(day, BigDecimal.ZERO);
+            trend.add(m("time", day.format(DateTimeFormatter.ofPattern("MM/dd")), "sales", total.longValue()));
+        }
+        return trend;
+    }
+
+    // 점주 대시보드 "1년" 기간 선택용 — 매장 단위 12개월 월별 집계(admin의
+    // monthlySalesTrend()와 동일 패턴, 매장 하나로 범위만 좁힘).
+    private List<Map<String, Object>> storeMonthlyTrend(long storeId) {
+        LocalDate start = LocalDate.now().minusMonths(11).withDayOfMonth(1);
+        List<Map<String, Object>> rows = jdbc.query("""
+                SELECT DATE_FORMAT(ordered_at, '%Y-%m') ym, SUM(total_amount) total
+                FROM customer_orders WHERE store_id=? AND ordered_at >= ?
+                GROUP BY DATE_FORMAT(ordered_at, '%Y-%m')
+                """, (rs, n) -> m("ym", rs.getString(1), "total", rs.getBigDecimal(2)),
+                storeId, Timestamp.valueOf(start.atStartOfDay()));
+        Map<String, BigDecimal> byMonth = new java.util.HashMap<>();
+        for (Map<String, Object> row : rows) byMonth.put((String) row.get("ym"), (BigDecimal) row.get("total"));
+        List<Map<String, Object>> trend = new java.util.ArrayList<>();
+        for (int i = 11; i >= 0; i--) {
+            LocalDate month = LocalDate.now().minusMonths(i);
+            BigDecimal total = byMonth.getOrDefault(month.format(DateTimeFormatter.ofPattern("yyyy-MM")), BigDecimal.ZERO);
+            trend.add(m("time", month.format(DateTimeFormatter.ofPattern("yy.MM")), "sales", total.longValue()));
         }
         return trend;
     }
