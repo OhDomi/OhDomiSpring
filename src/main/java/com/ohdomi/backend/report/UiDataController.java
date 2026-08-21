@@ -166,6 +166,24 @@ public class UiDataController {
                 """, storeId, Timestamp.valueOf(weekStart.atStartOfDay()), Timestamp.valueOf(today.plusDays(1).atStartOfDay()));
         BigDecimal weekSales = decimal(weekTotals.get("sales"));
 
+        // 2026-08-21: 대시보드 "이번 주 매출" 위젯이 시간대별(hourly, 오늘 하루뿐)을 그대로
+        // 갖다 써서 "최근 7일"이라는 라벨과 실제 데이터(하루치)가 안 맞던 문제 — 요일별 7일
+        // 집계를 별도로 만듦. 주문 없는 날도 0으로 채움(monthlySalesTrend()와 동일 패턴).
+        List<Map<String, Object>> dailyRows = jdbc.query("""
+                SELECT DATE(ordered_at) d, SUM(total_amount) total FROM customer_orders
+                WHERE store_id=? AND ordered_at >= ? AND ordered_at < ?
+                GROUP BY DATE(ordered_at)
+                """, (rs, n) -> m("d", rs.getDate(1).toLocalDate(), "total", rs.getBigDecimal(2)),
+                storeId, Timestamp.valueOf(weekStart.atStartOfDay()), Timestamp.valueOf(today.plusDays(1).atStartOfDay()));
+        Map<LocalDate, BigDecimal> byDay = new java.util.HashMap<>();
+        for (Map<String, Object> row : dailyRows) byDay.put((LocalDate) row.get("d"), (BigDecimal) row.get("total"));
+        List<Map<String, Object>> weeklyTrend = new java.util.ArrayList<>();
+        for (int i = 6; i >= 0; i--) {
+            LocalDate day = today.minusDays(i);
+            BigDecimal total = byDay.getOrDefault(day, BigDecimal.ZERO);
+            weeklyTrend.add(m("time", day.format(DateTimeFormatter.ofPattern("MM/dd")), "sales", total.longValue()));
+        }
+
         Map<String, Object> monthTotals = aggregate("""
                 SELECT COALESCE(SUM(total_amount),0) sales
                 FROM customer_orders
@@ -200,7 +218,7 @@ public class UiDataController {
         return m("salesSummary", m("todaySales", won(todaySales), "todayOrders", todayOrders,
                         "averageOrderPrice", won(average), "weeklySales", won(weekSales), "monthlySales", won(monthlySales),
                         "monthlyTarget", won(storeTarget(storeId)), "targetRate", targetRate(monthlySales, storeTarget(storeId))),
-                "hourlySales", hourly, "menuRanking", menus, "channelSales", channels,
+                "hourlySales", hourly, "weeklySalesTrend", weeklyTrend, "menuRanking", menus, "channelSales", channels,
                 "aiInsights", List.of(m("title", "MySQL 매출 데이터 분석", "description",
                         todayOrders + "건의 주문 데이터를 기준으로 집계했습니다.", "type", "info")));
     }
