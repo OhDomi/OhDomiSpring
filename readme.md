@@ -1,677 +1,282 @@
 # OhDomi Spring API
 
-REST API for the OhDomi backend. Unless the application configuration overrides the
-server port, the local base URL is:
+OhDomi 서비스의 인증, 매장 운영 데이터, 위생 점검, 위험 평가, 게시판과 화면용 통합 응답을 담당하는 Spring Boot 백엔드입니다. MySQL을 영속 저장소로 사용하고 위생 판정 AI와 폐점·재계약 리스크 모델을 연결합니다.
 
-```text
-http://localhost:8080
+기본 로컬 주소는 `http://localhost:8080`입니다.
+
+## 주요 기능
+
+- 가맹점주·본사 관리자 로그인, 세션, 역할별 접근 제어
+- 매장 정보, 직원 일정, 시설 점검 관리
+- 매출, 고객 주문, 재고, 발주 추천, 구매 주문 관리
+- 사진 기반 위생 AI 호출과 결과·이미지·개선 과제 저장
+- 매장 위험 모델 정기 호출과 최신 평가 조회
+- 공지사항과 가맹점 문의 게시판
+- React 화면에 맞춘 가맹점주·관리자 통합 API
+- MySQL 스키마, 마이그레이션, 데모 데이터 초기화
+
+## 시스템 구성
+
+```mermaid
+flowchart LR
+    W[OhDomi Web<br/>:5173] -->|/api| S[OhDomi Spring<br/>:8080]
+    S --> DB[(MySQL 8<br/>:3306)]
+    S -->|위생 사진 판정| H[Hygiene AI<br/>:8000]
+    S -->|정기 위험도 갱신| R[Closure Risk API<br/>:8050]
 ```
 
-All request and response bodies use JSON. Dates use `YYYY-MM-DD`, times use
-`HH:mm:ss`, and date-times use ISO-8601 format.
+## 기술 스택
 
-## Endpoint summary
+- Java 17
+- Spring Boot 4.1
+- Spring MVC, Validation, Data JPA
+- JDBC 기반 조회·쓰기 로직
+- MySQL 8, 테스트용 H2
+- Gradle Wrapper
 
-| Method | Endpoint | Description |
+## 로컬 실행
+
+### 1. MySQL 시작
+
+기본 설정은 `127.0.0.1:3306`의 `ohdomi` 데이터베이스와 비밀번호가 없는 `root` 계정을 사용합니다. Docker 예시:
+
+```powershell
+docker run --name ohdomi-mysql `
+  -e MYSQL_ALLOW_EMPTY_PASSWORD=yes `
+  -e MYSQL_DATABASE=ohdomi `
+  -p 3306:3306 `
+  -d mysql:8.0
+```
+
+이미 컨테이너를 만든 경우에는 `docker start ohdomi-mysql`을 사용합니다.
+
+### 2. 환경 변수 설정
+
+필요하면 저장소 루트에 `.env`를 만들 수 있습니다. `application.yaml`이 이 파일을 선택적으로 읽습니다.
+
+```dotenv
+SPRING_DATASOURCE_URL=jdbc:mysql://127.0.0.1:3306/ohdomi?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Seoul
+MYSQL_USER=root
+MYSQL_PASSWORD=
+HYGIENE_AI_BASE_URL=http://127.0.0.1:8000
+RISK_MODEL_BASE_URL=http://127.0.0.1:8050
+RISK_MODEL_PREDICT_PATH=/risk/predict
+RISK_MODEL_REFRESH_ENABLED=true
+RISK_MODEL_REFRESH_CRON=0 0 3 * * *
+RISK_MODEL_REFRESH_ZONE=Asia/Seoul
+```
+
+### 3. 서버 시작
+
+```powershell
+.\gradlew.bat bootRun
+```
+
+macOS 또는 Linux:
+
+```bash
+./gradlew bootRun
+```
+
+기본 설정에서는 시작할 때 `schema.sql`, `schema-mysql-migrations.sql`, `data.sql`을 순서대로 적용합니다. 기존 DB를 그대로 사용하려면 `SPRING_SQL_INIT_MODE=never`를 지정할 수 있지만, 빈 DB에서 이 값을 사용하면 테이블과 기본 데이터가 만들어지지 않습니다.
+
+### 통합 실행
+
+OhDomi의 네 저장소가 같은 상위 작업 폴더에 준비되어 있다면 통합 실행 스크립트를 사용할 수 있습니다.
+
+```powershell
+..\start-all-servers.bat --check
+..\start-all-servers.bat
+```
+
+통합 스크립트는 Hygiene AI `:8000`, Risk API `:8050`, Spring `:8080`, React `:5173`을 각각 별도 창에서 실행합니다. 현재 스크립트는 기존 로컬 DB 보존을 위해 `SPRING_SQL_INIT_MODE=never`를 지정하므로 최초 DB 구성은 먼저 단독 실행으로 완료하세요.
+
+## 환경 변수
+
+| 변수 | 기본값 | 설명 |
 | --- | --- | --- |
-| `GET` | `/api/test` | Check whether the server is running |
-| `POST` | `/api/auth/login` | Log in as an owner or administrator |
-| `POST` | `/api/auth/register` | Register an owner account |
-| `GET` | `/api/stores` | List stores |
-| `POST` | `/api/stores` | Create a store |
-| `GET` | `/api/stores/{storeId}` | Get one store |
-| `PUT` | `/api/stores/{storeId}` | Replace a store's profile information |
-| `GET` | `/api/stores/{storeId}/staff` | Get a store's staff shifts |
-| `POST` | `/api/stores/{storeId}/staff` | Upload a staff shift |
-| `GET` | `/api/stores/{storeId}/facilities` | Get a store's facilities and latest checks |
-| `POST` | `/api/stores/{storeId}/facilities` | Create a facility |
-| `POST` | `/api/stores/{storeId}/facilities/{facilityId}/checks` | Upload a facility check |
-| `GET` | `/api/stores/{storeId}/sales-summary` | Get sales totals for a date range |
-| `GET` | `/api/stores/{storeId}/inventory` | Get inventory items |
-| `POST` | `/api/stores/{storeId}/inventory` | Create an inventory item |
-| `PUT` | `/api/stores/{storeId}/inventory/{inventoryItemId}` | Replace an inventory item |
-| `POST` | `/api/stores/{storeId}/customer-orders` | Upload a customer order and its items |
-| `GET` | `/api/stores/{storeId}/order-recommendations` | Get ordering recommendations |
-| `POST` | `/api/stores/{storeId}/order-recommendations` | Upload an ordering recommendation |
-| `GET` | `/api/stores/{storeId}/purchase-orders` | Get purchase orders |
-| `POST` | `/api/stores/{storeId}/purchase-orders` | Upload a purchase order and its items |
-| `GET` | `/api/hygiene-inspections` | List hygiene inspections |
-| `POST` | `/api/hygiene-inspections` | Upload an inspection and its related information |
-| `GET` | `/api/hygiene-inspections/check-items` | List Hygiene AI checklist items |
-| `POST` | `/api/hygiene-inspections/analyze` | Analyze and persist an uploaded image |
-| `GET` | `/api/hygiene-inspections/images/{imageId}` | Stream a stored inspection image |
-| `GET` | `/api/hygiene-inspections/{inspectionId}` | Get inspection details |
-| `GET` | `/api/risk-assessments/latest` | Get the latest store risk assessments |
-| `GET` | `/api/board/posts` | List notice or inquiry posts |
-| `GET` | `/api/board/posts/{postId}` | Get one board post |
-| `POST` | `/api/board/posts` | Create a notice or inquiry |
-| `PATCH` | `/api/board/posts/{postId}/pin` | Toggle a post's pinned status |
-| `POST` | `/api/board/posts/{postId}/answer` | Create or replace an inquiry answer |
-| `GET` | `/api/ui/stores/{storeId}/overview` | Get all owner dashboard data |
-| `GET` | `/api/ui/stores/{storeId}/management` | Get owner management-page data |
-| `GET` | `/api/ui/stores/{storeId}/hygiene` | Get owner hygiene-page data |
-| `GET` | `/api/ui/stores/{storeId}/orders` | Get owner ordering-page data |
-| `GET` | `/api/ui/stores/{storeId}/sales` | Get owner sales-page data |
-| `GET` | `/api/ui/admin/overview` | Get all administrator dashboard data |
-| `GET` | `/api/ui/admin/stores` | Get administrator store-page data |
-| `GET` | `/api/ui/admin/risks` | Get administrator risk-page data |
-| `GET` | `/api/ui/admin/hygiene` | Get administrator hygiene-page data |
-| `GET` | `/api/ui/admin/sales` | Get administrator sales-page data |
+| `SPRING_DATASOURCE_URL` | `jdbc:mysql://127.0.0.1:3306/ohdomi...` | MySQL JDBC URL |
+| `MYSQL_USER` | `root` | DB 사용자 |
+| `MYSQL_PASSWORD` | 빈 문자열 | DB 비밀번호 |
+| `SPRING_SQL_INIT_MODE` | `always` | 스키마·데모 데이터 초기화 여부 |
+| `HYGIENE_AI_BASE_URL` | `http://127.0.0.1:8000` | Hygiene AI 주소 |
+| `RISK_MODEL_BASE_URL` | `http://127.0.0.1:8001` | 위험 모델 주소. 통합 로컬 환경은 `8050` 사용 |
+| `RISK_MODEL_PREDICT_PATH` | `/risk/predict` | 매장 위험 예측 경로 |
+| `RISK_MODEL_REFRESH_ENABLED` | `true` | 위험 평가 정기 갱신 여부 |
+| `RISK_MODEL_REFRESH_CRON` | `0 0 3 * * *` | 위험 평가 갱신 cron |
+| `RISK_MODEL_REFRESH_ZONE` | `Asia/Seoul` | 스케줄 시간대 |
 
-## Health check
+## 데모 계정
 
-### `GET /api/test`
+`data.sql`이 적용된 로컬 DB에서는 다음 계정을 사용할 수 있습니다.
 
-Checks that the application is running.
+| 역할 | 아이디 | 비밀번호 | 연결 매장 |
+| --- | --- | --- | --- |
+| 본사 관리자 | `admin` | `1234` | 없음 |
+| 가맹점주 | `demo` | `1234` | 데모 매장 |
 
-Example response:
+이 계정은 로컬 시연 전용입니다. 외부 배포 전 기본 계정과 비밀번호를 교체하고 불필요한 시드 데이터를 제거하세요.
 
-```text
-OhDomi backend server is running!
+## 인증과 권한
+
+- 로그인 성공 시 12시간 유효한 `SESSION` HttpOnly 쿠키를 발급합니다.
+- 세션은 현재 애플리케이션 메모리에 저장되므로 서버 재시작 시 사라지고 다중 인스턴스 간 공유되지 않습니다.
+- `/api/auth/login`, `/api/auth/register`, `/api/auth/logout`, `/api/auth/captcha` 외의 `/api/**` 요청에는 로그인 세션이 필요합니다.
+- 경로에 `/admin`이 포함된 API는 관리자만 접근할 수 있습니다.
+- 가맹점주가 `/api/stores/{storeId}` 또는 `/api/ui/stores/{storeId}`를 호출할 때는 로그인 계정의 매장 ID와 일치해야 합니다.
+- `POST`, `PUT`, `PATCH`, `DELETE` 요청에는 `X-Requested-With: XMLHttpRequest` 헤더가 필요합니다.
+- 쿠키는 `Secure; SameSite=None`으로 발급되므로 운영 배포는 HTTPS를 사용해야 합니다.
+- 로그인 실패가 5회 누적되면 계정이 15분간 잠깁니다.
+
+로그인 예시:
+
+```powershell
+curl.exe -c cookies.txt -X POST http://localhost:8080/api/auth/login `
+  -H "Content-Type: application/json" `
+  -H "X-Requested-With: XMLHttpRequest" `
+  -d '{"loginId":"demo","password":"1234","role":"OWNER"}'
+
+curl.exe -b cookies.txt http://localhost:8080/api/auth/me
 ```
 
-## Authentication
+## API 요약
 
-The current API returns user information but does not issue a token or session.
+모든 요청·응답 본문은 JSON을 사용합니다. 위생 사진 분석만 `multipart/form-data`입니다.
 
-### `POST /api/auth/login`
+### 인증
 
-Request body:
-
-```json
-{
-  "loginId": "owner01",
-  "password": "password123",
-  "role": "OWNER"
-}
-```
-
-`role` must be `OWNER` or `ADMIN` (case-insensitive).
-
-Successful response fields:
-
-```text
-userId, loginId, name, role, phone, storeId
-```
-
-Returns `401 Unauthorized` when the credentials or selected role do not match.
-
-### `POST /api/auth/register`
-
-Creates an `OWNER` account and returns `201 Created`.
-
-Request body:
-
-```json
-{
-  "loginId": "new.owner",
-  "password": "password123",
-  "name": "New Owner",
-  "phone": "010-1234-5678"
-}
-```
-
-Validation:
-
-- `loginId`: 4-100 characters; letters, numbers, `.`, `_`, and `-` only
-- `password`: 8-72 characters
-- `name`: maximum 100 characters
-- `phone`: maximum 30 characters; numbers, spaces, `+`, `(`, `)`, and `-` only
-
-Successful response fields:
-
-```text
-userId, loginId, name, role, phone, createdAt
-```
-
-Returns `409 Conflict` when `loginId` already exists.
-
-## Stores
-
-### `GET /api/stores`
-
-Returns all stores ordered by store ID.
-
-Response fields per store:
-
-```text
-storeId, storeCode, storeName, ownerName, region, address, phone,
-openTime, closeTime, operationStatus, openedOn, contractEndsOn,
-monthlySalesTarget
-```
-
-### `GET /api/stores/{storeId}`
-
-Returns one store. Returns `404 Not Found` if the store does not exist.
-
-### `POST /api/stores`
-
-Creates a store for an active user whose role is `OWNER`. Returns `201 Created`.
-
-Request body:
-
-```json
-{
-  "ownerUserId": 2,
-  "storeCode": "ST-NEW",
-  "name": "New Store",
-  "region": "Seoul",
-  "address": "1 Store Street",
-  "phone": "010-1234-5678",
-  "openTime": "09:00:00",
-  "closeTime": "22:00:00",
-  "operationStatus": "OPEN",
-  "openedOn": "2026-07-29",
-  "contractEndsOn": "2028-07-28",
-  "monthlySalesTarget": 50000000
-}
-```
-
-Returns `409 Conflict` when `storeCode` already exists.
-
-### `PUT /api/stores/{storeId}`
-
-Replaces the complete store profile. It uses the same body as `POST /api/stores` and
-returns the updated store.
-
-### `GET /api/stores/{storeId}/staff`
-
-Returns staff shifts for a store and date.
-
-Query parameters:
-
-| Parameter | Required | Description |
+| Method | Endpoint | 설명 |
 | --- | --- | --- |
-| `date` | No | Work date (`YYYY-MM-DD`); defaults to today |
+| `GET` | `/api/auth/captcha` | 회원가입용 산술 CAPTCHA 발급 |
+| `POST` | `/api/auth/register` | 가맹점주 계정 생성 |
+| `POST` | `/api/auth/login` | 로그인 및 세션 쿠키 발급 |
+| `GET` | `/api/auth/me` | 현재 세션 사용자 조회 |
+| `POST` | `/api/auth/logout` | 세션 종료 |
 
-Example:
+회원가입에는 `loginId`, `password`, `name`, `phone`, `privacyConsent`, `captchaToken`, `captchaAnswer`가 필요합니다. 신규 비밀번호는 8~72자이며 영문, 숫자, 특수문자를 모두 포함해야 합니다.
 
-```http
-GET /api/stores/1/staff?date=2026-07-29
-```
+### 매장 운영
 
-Response fields per shift:
-
-```text
-staffShiftId, name, role, workDate, startsAt, endsAt, status
-```
-
-### `POST /api/stores/{storeId}/staff`
-
-Uploads a staff shift and returns `201 Created`.
-
-```json
-{
-  "name": "Staff Name",
-  "role": "CASHIER",
-  "workDate": "2026-07-29",
-  "startsAt": "09:00:00",
-  "endsAt": "17:00:00",
-  "status": "SCHEDULED"
-}
-```
-
-### `GET /api/stores/{storeId}/facilities`
-
-Returns active facilities and each facility's latest check.
-
-Response fields per facility:
-
-```text
-facilityId, name, status, memo, checkedAt
-```
-
-### `POST /api/stores/{storeId}/facilities`
-
-Creates a facility and returns `201 Created`. `active` defaults to `true` when it is
-omitted or `null`.
-
-```json
-{
-  "name": "Refrigerator",
-  "active": true
-}
-```
-
-Returns `409 Conflict` when the store already has a facility with the same name.
-
-### `POST /api/stores/{storeId}/facilities/{facilityId}/checks`
-
-Uploads a check for a facility belonging to the selected store and returns
-`201 Created`.
-
-```json
-{
-  "status": "NORMAL",
-  "memo": "Temperature is normal",
-  "checkedAt": "2026-07-29T10:00:00"
-}
-```
-
-### `GET /api/stores/{storeId}/sales-summary`
-
-Returns completed-order sales data over an inclusive date range.
-
-Query parameters:
-
-| Parameter | Required | Description |
+| Method | Endpoint | 설명 |
 | --- | --- | --- |
-| `from` | Yes | Start date (`YYYY-MM-DD`) |
-| `to` | Yes | End date (`YYYY-MM-DD`); must not be before `from` |
+| `GET/POST` | `/api/stores` | 매장 목록 조회·생성 |
+| `GET/PUT` | `/api/stores/{storeId}` | 매장 상세 조회·수정 |
+| `GET/POST` | `/api/stores/{storeId}/staff` | 직원 일정 조회·등록 |
+| `GET/POST` | `/api/stores/{storeId}/facilities` | 시설 조회·등록 |
+| `POST` | `/api/stores/{storeId}/facilities/{facilityId}/checks` | 시설 점검 등록 |
+| `GET` | `/api/stores/{storeId}/sales-summary` | 기간별 매출 요약 |
 
-Example:
+### 재고·주문·발주
 
-```http
-GET /api/stores/1/sales-summary?from=2026-07-01&to=2026-07-31
-```
-
-Response fields:
-
-```text
-storeId, from, to, sales, orders, averageOrderAmount
-```
-
-## Inventory and ordering
-
-### `GET /api/stores/{storeId}/inventory`
-
-Returns the store's inventory.
-
-Response fields per item:
-
-```text
-inventoryItemId, itemName, category, unit, currentQuantity,
-reorderLevel, unitPrice, updatedAt
-```
-
-### `POST /api/stores/{storeId}/inventory`
-
-Creates an inventory item and returns `201 Created`.
-
-```json
-{
-  "itemName": "Salmon",
-  "category": "SEAFOOD",
-  "unit": "kg",
-  "currentQuantity": 10,
-  "reorderLevel": 20,
-  "unitPrice": 18000
-}
-```
-
-Returns `409 Conflict` when an item with the same name already exists at the store.
-
-### `PUT /api/stores/{storeId}/inventory/{inventoryItemId}`
-
-Replaces an inventory item using the same body as the inventory `POST` endpoint.
-
-### `POST /api/stores/{storeId}/customer-orders`
-
-Uploads a customer order and all of its line items in one transaction. The API
-calculates `totalAmount` from each item's `quantity * unitPrice`. `channel` must be
-`IN_STORE`, `DELIVERY`, or `TAKEOUT`.
-
-```json
-{
-  "channel": "IN_STORE",
-  "orderedAt": "2026-07-29T12:00:00",
-  "status": "COMPLETED",
-  "items": [
-    {
-      "menuItemId": 1,
-      "quantity": 2,
-      "unitPrice": 11000
-    }
-  ]
-}
-```
-
-### `GET /api/stores/{storeId}/order-recommendations`
-
-Returns recommendations for one date.
-
-Query parameters:
-
-| Parameter | Required | Description |
+| Method | Endpoint | 설명 |
 | --- | --- | --- |
-| `date` | No | Recommendation date (`YYYY-MM-DD`); defaults to today |
+| `GET/POST` | `/api/stores/{storeId}/inventory` | 재고 조회·등록 |
+| `PUT` | `/api/stores/{storeId}/inventory/{inventoryItemId}` | 재고 수정 |
+| `POST` | `/api/stores/{storeId}/customer-orders` | 고객 주문과 품목 등록 |
+| `GET/POST` | `/api/stores/{storeId}/order-recommendations` | 발주 추천 조회·등록 |
+| `GET/POST` | `/api/stores/{storeId}/purchase-orders` | 구매 주문 조회·등록 |
 
-Example:
+### 위생 점검
 
-```http
-GET /api/stores/1/order-recommendations?date=2026-07-29
-```
-
-Response fields per recommendation:
-
-```text
-recommendationId, inventoryItemId, itemName, category, unit,
-currentQuantity, expectedUsage, recommendedQuantity, unitPrice,
-amount, riskLevel, reason, recommendationDate
-```
-
-### `POST /api/stores/{storeId}/order-recommendations`
-
-Uploads a recommendation for an inventory item belonging to the selected store and
-returns `201 Created`.
-
-```json
-{
-  "inventoryItemId": 1,
-  "recommendationDate": "2026-07-29",
-  "expectedUsage": 18,
-  "recommendedQuantity": 8,
-  "riskLevel": "WARNING",
-  "reason": "Stock is below expected usage"
-}
-```
-
-Only one recommendation may exist for an inventory item and date.
-
-### `GET /api/stores/{storeId}/purchase-orders`
-
-Returns a store's purchase orders, newest first.
-
-Response fields per order:
-
-```text
-purchaseOrderId, orderNumber, status, orderedAt, expectedAt,
-totalAmount, createdAt, itemCount
-```
-
-### `POST /api/stores/{storeId}/purchase-orders`
-
-Uploads a purchase order and all of its line items in one transaction. The API
-calculates `totalAmount`. Status must be `DRAFT`, `ORDERED`, `SHIPPING`, `RECEIVED`,
-or `CANCELLED`.
-
-```json
-{
-  "orderNumber": "PO-20260729-001",
-  "status": "DRAFT",
-  "orderedAt": null,
-  "expectedAt": "2026-07-31T09:00:00",
-  "items": [
-    {
-      "inventoryItemId": 1,
-      "quantity": 5,
-      "unitPrice": 18000
-    }
-  ]
-}
-```
-
-Returns `409 Conflict` when `orderNumber` already exists.
-
-## Hygiene inspections
-
-Set `HYGIENE_AI_BASE_URL` to the FastAPI service base URL. It defaults to
-`http://127.0.0.1:8000`.
-
-### `POST /api/hygiene-inspections/analyze`
-
-Accepts `multipart/form-data` with `storeId`, `itemId`, optional `retakeCount`, and
-an `image` file. JPG, PNG, and WebP files up to 10MB are accepted. Spring sends the
-file to Hygiene AI, then saves the inspection, item result, improvement action,
-and original image bytes in one database transaction.
-
-The response contains `inspection` (the persisted inspection detail) and
-`aiResult` (the structured model response). Valid item IDs are available from
-`GET /api/hygiene-inspections/check-items`.
-
-Stored image bytes can be read from the `imageUrl` returned in each image record,
-which points to `GET /api/hygiene-inspections/images/{imageId}`.
-
-### `GET /api/hygiene-inspections`
-
-Lists inspections, newest first.
-
-Query parameters:
-
-| Parameter | Required | Description |
+| Method | Endpoint | 설명 |
 | --- | --- | --- |
-| `storeId` | No | Return inspections for only this store |
+| `GET` | `/api/hygiene-inspections/check-items` | Hygiene AI 체크리스트 조회 |
+| `POST` | `/api/hygiene-inspections/analyze` | 사진 판정 후 결과·이미지 저장 |
+| `GET/POST` | `/api/hygiene-inspections` | 점검 목록 조회·수동 점검 등록 |
+| `GET` | `/api/hygiene-inspections/{inspectionId}` | 점검 상세 조회 |
+| `GET` | `/api/hygiene-inspections/images/{imageId}` | 저장된 원본 이미지 스트리밍 |
 
-Example:
+`analyze`는 `storeId`, `itemId`, 선택 항목인 `retakeCount`, `image`를 받습니다. JPG, PNG, WebP 파일을 지원하며 최대 크기는 10MB입니다.
 
-```http
-GET /api/hygiene-inspections?storeId=1
-```
+### 위험 평가와 게시판
 
-Response fields per inspection:
+| Method | Endpoint | 설명 |
+| --- | --- | --- |
+| `GET` | `/api/risk-assessments/latest` | 매장별 최신 위험 평가 조회. `level=1..5` 필터 지원 |
+| `GET/POST` | `/api/board/posts` | 게시글 목록·등록 |
+| `GET` | `/api/board/posts/{postId}` | 게시글 상세 조회 |
+| `PATCH` | `/api/board/posts/{postId}/pin` | 공지 고정 상태 변경 |
+| `POST` | `/api/board/posts/{postId}/answer` | 문의 답변 등록·수정 |
 
-```text
-inspectionId, storeId, storeName, score, status, reviewer, summary,
-inspectedAt, imageCount, openTaskCount
-```
+### 화면 통합 API
 
-### `GET /api/hygiene-inspections/{inspectionId}`
+| Method | Endpoint | 설명 |
+| --- | --- | --- |
+| `GET` | `/api/ui/stores/{storeId}/overview` | 가맹점주 통합 대시보드 |
+| `GET` | `/api/ui/stores/{storeId}/management` | 매장·시설·직원 관리 화면 |
+| `GET` | `/api/ui/stores/{storeId}/hygiene` | 위생 점검 화면 |
+| `GET` | `/api/ui/stores/{storeId}/orders` | 발주 화면 |
+| `GET` | `/api/ui/stores/{storeId}/sales` | 매출 화면. `period` 쿼리 지원 |
+| `GET` | `/api/ui/admin/overview` | 관리자 통합 대시보드 |
+| `GET` | `/api/ui/admin/stores` | 전체 가맹점 관리 |
+| `GET` | `/api/ui/admin/risks` | 위험 평가 요약 |
+| `GET` | `/api/ui/admin/hygiene` | 전체 위생 현황 |
+| `GET` | `/api/ui/admin/sales` | 전체 매출 분석 |
 
-Returns an object containing `inspection`, `checkResults`, `images`, and
-`improvementTasks`. Returns `404 Not Found` if the inspection does not exist.
+`GET /api/test`는 애플리케이션 응답을 확인하는 간단한 엔드포인트지만 다른 `/api/**` 경로와 동일하게 로그인 세션이 필요합니다.
 
-Check-result fields:
+## 오류 응답
 
-```text
-checkResultId, itemName, score, status, memo
-```
-
-Improvement-task fields:
-
-```text
-improvementTaskId, title, description, priority, status, dueAt, completedAt
-```
-
-Image fields:
-
-```text
-imageId, imageUrl, category, analysisResult, uploadedAt
-```
-
-### `POST /api/hygiene-inspections`
-
-Uploads a complete hygiene inspection in one transaction and returns `201 Created`.
-The `checkResults`, `images`, and `improvementTasks` arrays are optional. This
-legacy JSON endpoint stores image metadata only. Images submitted through the AI
-analysis endpoint are stored as database binary content.
+처리된 오류는 다음 형태를 사용합니다.
 
 ```json
 {
-  "storeId": 1,
-  "score": 85,
-  "status": "WARNING",
-  "reviewer": "Inspector Name",
-  "summary": "Entrance needs cleaning",
-  "inspectedAt": "2026-07-29T11:30:00",
-  "checkResults": [
-    {
-      "itemName": "Entrance cleanliness",
-      "score": 70,
-      "status": "WARNING",
-      "memo": "Clean before opening"
-    }
-  ],
-  "images": [
-    {
-      "imageUrl": "/uploads/hygiene/inspection.jpg",
-      "category": "ENTRANCE",
-      "analysisResult": "Cleaning required"
-    }
-  ],
-  "improvementTasks": [
-    {
-      "title": "Clean entrance",
-      "description": "Clean and upload a new photo",
-      "priority": "WARNING",
-      "status": "OPEN",
-      "dueAt": "2026-07-30T09:00:00",
-      "completedAt": null
-    }
-  ]
-}
-```
-
-## Risk assessments
-
-### Kimgane store seed handoff
-
-The public-data handoff should follow `docs/kimgane-stores.template.csv`. Required
-columns are `store_code`, `name`, `region`, `address`, `latitude`, and `longitude`.
-`opened_on` and `exclusive_area_sqm` may remain empty until contract/store-management
-data is supplied. Actual sales remain sourced from `customer_orders` and
-`GET /api/stores/{id}/sales-summary`; they are not duplicated in the store or risk tables.
-
-Before importing, validate unique store codes, coordinate ranges, and the expected
-216 nationwide / 88 Seoul row counts. The source rows have not been supplied in this
-workspace, so the repository includes the import contract rather than fabricated stores.
-
-### `GET /api/risk-assessments/latest`
-
-Returns the latest assessment for every store, ordered by risk score descending.
-
-Query parameters:
-
-| Parameter | Required | Description |
-| --- | --- | --- |
-| `level` | No | Filter by numeric risk level (`1` through `5`) |
-
-Example:
-
-```http
-GET /api/risk-assessments/latest?level=5
-```
-
-Response fields per assessment:
-
-```text
-riskAssessmentId, storeId, storeName, ownerName, region, modelVersion,
-riskScore, riskLevel, locationRiskScore, classificationDetail, mainReason,
-prediction, recommendedAction, assessedAt, riskFactors[]
-```
-
-Assessments are written by `RiskAssessmentRefreshService`, which calls the configured
-model server on the `risk-model.refresh-cron` schedule. Operational sales and hygiene
-signals remain available from their own order/sales and hygiene resources.
-
-## Board
-
-Board types are `NOTICE` (announcements) and `INQUIRY` (questions).
-
-### `GET /api/board/posts`
-
-Lists posts with pinned posts first, followed by newest posts.
-
-Query parameters:
-
-| Parameter | Required | Description |
-| --- | --- | --- |
-| `boardType` | No | `NOTICE` or `INQUIRY`; defaults to `NOTICE` |
-
-Examples:
-
-```http
-GET /api/board/posts?boardType=NOTICE
-GET /api/board/posts?boardType=INQUIRY
-```
-
-Response fields per post:
-
-```text
-postId, boardType, category, title, content, authorName, storeId,
-status, isPinned, isUrgent, viewCount, createdAt, updatedAt, answer
-```
-
-### `GET /api/board/posts/{postId}`
-
-Returns one post and increments its `viewCount`. Returns `404 Not Found` when the
-post does not exist.
-
-### `POST /api/board/posts`
-
-Creates a notice or inquiry. The referenced user must be active, and `storeId`,
-when supplied, must exist. Only a user whose database role is `ADMIN` can create a
-`NOTICE`.
-
-Request body:
-
-```json
-{
-  "authorUserId": 1,
-  "storeId": null,
-  "boardType": "NOTICE",
-  "category": "Announcement",
-  "title": "New announcement",
-  "content": "Announcement content",
-  "isPinned": false,
-  "isUrgent": false
-}
-```
-
-`authorUserId` must be positive, `storeId` may be `null`, `category` has a maximum
-length of 50, and `title` has a maximum length of 200. New notices receive status
-`PUBLISHED`; new inquiries receive status `PENDING`.
-
-### `PATCH /api/board/posts/{postId}/pin`
-
-Toggles `isPinned` and returns the updated post. This endpoint has no request body.
-
-### `POST /api/board/posts/{postId}/answer`
-
-Creates or replaces the answer to an `INQUIRY` and changes the post status to
-`ANSWERED`. The author must have the `ADMIN` database role.
-
-Request body:
-
-```json
-{
-  "authorUserId": 1,
-  "content": "Administrator answer"
-}
-```
-
-## UI aggregation endpoints
-
-These endpoints return page-oriented maps assembled from several database queries.
-Their response shapes are intended for the current frontend dashboards.
-
-### Owner/store UI
-
-| Method | Endpoint | Description |
-| --- | --- | --- |
-| `GET` | `/api/ui/stores/{storeId}/overview` | Combined management, hygiene, ordering, and sales data |
-| `GET` | `/api/ui/stores/{storeId}/management` | Store details, facilities, staff, and alerts |
-| `GET` | `/api/ui/stores/{storeId}/hygiene` | Latest inspection, checklist, improvements, and inspection history |
-| `GET` | `/api/ui/stores/{storeId}/orders` | Recommendations, order history, and ordering summary |
-| `GET` | `/api/ui/stores/{storeId}/sales` | Sales summary, hourly sales, channels, and menu ranking |
-
-### Administrator UI
-
-| Method | Endpoint | Description |
-| --- | --- | --- |
-| `GET` | `/api/ui/admin/overview` | Combined stores, hygiene, sales, and risk data |
-| `GET` | `/api/ui/admin/stores` | Store list, contract information, sales, hygiene, and risk summary |
-| `GET` | `/api/ui/admin/risks` | Latest risk assessments and risk summary |
-| `GET` | `/api/ui/admin/hygiene` | Latest store inspections and hygiene summary |
-| `GET` | `/api/ui/admin/sales` | Sales totals, ranking, regional totals, and weak-store data |
-
-## Error responses
-
-Handled API errors use this structure:
-
-```json
-{
-  "timestamp": "2026-07-29T06:00:00Z",
+  "timestamp": "2026-08-21T00:00:00Z",
   "status": 404,
   "error": "Not Found",
-  "message": "Store 999 was not found"
+  "error_code": "NOT_FOUND",
+  "message": "요청한 리소스를 찾을 수 없습니다."
 }
 ```
 
-Common status codes:
+주요 상태 코드는 `400`(요청·검증 오류), `401`(로그인 필요), `403`(권한·CSRF 거부), `404`(리소스 없음), `409`(중복), `502`(Hygiene AI 호출 실패)입니다.
 
-| Status | Meaning |
-| --- | --- |
-| `400 Bad Request` | Invalid parameters, request body, or validation failure |
-| `401 Unauthorized` | Invalid login credentials or role |
-| `404 Not Found` | Requested database resource does not exist |
-| `409 Conflict` | Registration uses an existing login ID |
+## 데이터베이스와 시드
+
+- `src/main/resources/schema.sql`: 기본 테이블과 인덱스
+- `src/main/resources/schema-mysql-migrations.sql`: 기존 DB 보완용 멱등 마이그레이션
+- `src/main/resources/data.sql`: 기본 계정과 데모 운영 데이터
+- [`docs/ERD.md`](docs/ERD.md): 엔터티 관계와 테이블 설명
+- `kimgane_*.sql`: 발표·시연용 매장, 매출, 위험, 위생, 재고 데이터와 일부 롤백 스크립트
+
+대용량 시드 SQL은 대상 매장 ID와 현재 데이터 유무를 확인한 뒤 적용하세요. `*_rollback.sql`은 대응되는 시드 범위만 되돌리도록 작성되어 있으므로 파일을 함께 보관합니다.
+
+## 테스트와 빌드
+
+```powershell
+.\gradlew.bat test
+.\gradlew.bat bootJar
+```
+
+빌드 결과는 `build/libs/`에 생성됩니다.
+
+## 디렉터리 구조
+
+```text
+src/main/java/com/ohdomi/backend/
+  auth/       로그인, CAPTCHA, 세션, 권한 필터
+  board/      공지·문의 게시판
+  hygiene/    AI 연동, 점검·이미지 저장
+  order/      재고, 주문, 발주
+  report/     React 화면용 통합 응답
+  risk/       위험 모델 연동과 평가 조회
+  store/      매장, 직원, 시설, 매출
+src/main/resources/ 스키마, 마이그레이션, 데모 데이터, 설정
+src/test/           통합·컨트롤러 테스트
+docs/               ERD와 데이터 이관 자료
+local-dev/          Windows 로컬 설치·실행 보조 스크립트
+```
+
+## 운영 전 확인사항
+
+- 현재 세션 저장소는 단일 인스턴스 메모리 방식입니다. 다중 인스턴스 운영 전 Redis나 DB 기반 세션으로 교체해야 합니다.
+- 매장 ID가 경로에 있는 API는 가맹점주 소유권을 검사하지만, 일부 쿼리 파라미터 기반 조회는 컨트롤러 단위 검사가 추가로 필요합니다.
+- CORS 허용 오리진은 코드에 등록되어 있습니다. 실제 배포 도메인만 남기고 프런트엔드 설정과 함께 검증하세요.
+- 운영 DB에서는 기본 계정과 데모 시드 자동 입력을 비활성화하세요.
+- 위생 AI와 위험 모델의 타임아웃·장애 응답을 모니터링하고, 모델·데이터 버전을 결과와 함께 추적하세요.
+
+## 관련 저장소
+
+- [OhDomiReact](https://github.com/OhDomi/OhDomiReact) — 통합 웹 대시보드
+- [hygiene_ai](https://github.com/OhDomi/hygiene_ai) — 사진 기반 위생 판정
+- [closure-risk-model](https://github.com/OhDomi/closure-risk-model) — 폐점·재계약 위험 및 상권 분석
