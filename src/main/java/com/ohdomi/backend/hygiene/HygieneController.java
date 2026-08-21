@@ -4,9 +4,12 @@ import java.io.IOException;
 import java.sql.PreparedStatement;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import com.ohdomi.backend.global.ResourceNotFoundException;
 import jakarta.validation.Valid;
@@ -45,6 +48,9 @@ import org.springframework.web.multipart.MultipartFile;
 public class HygieneController {
     private static final long MAX_IMAGE_BYTES = 10L * 1024 * 1024;
     private static final Set<String> ALLOWED_IMAGE_TYPES = Set.of("image/jpeg", "image/png", "image/webp");
+    private static final Set<String> EXPECTED_CHECKLIST_ITEM_IDS = IntStream.rangeClosed(1, 39)
+            .mapToObj(number -> "item_%02d".formatted(number))
+            .collect(Collectors.toUnmodifiableSet());
 
     private final JdbcTemplate jdbc;
     private final HygieneAiClient hygieneAi;
@@ -59,7 +65,19 @@ public class HygieneController {
 
     @GetMapping("/check-items")
     public List<HygieneAiClient.ChecklistItem> checkItems() {
-        return hygieneAi.checklist();
+        List<HygieneAiClient.ChecklistItem> items = hygieneAi.checklist();
+        Set<String> itemIds = items.stream()
+                .map(HygieneAiClient.ChecklistItem::itemId)
+                .filter(StringUtils::hasText)
+                .collect(Collectors.toSet());
+        if (items.size() != EXPECTED_CHECKLIST_ITEM_IDS.size()
+                || !itemIds.equals(EXPECTED_CHECKLIST_ITEM_IDS)) {
+            throw new IllegalStateException(
+                    "Hygiene checklist must contain every item from item_01 through item_39");
+        }
+        return items.stream()
+                .sorted(Comparator.comparing(HygieneAiClient.ChecklistItem::itemId))
+                .toList();
     }
 
     @PostMapping(value = "/analyze", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

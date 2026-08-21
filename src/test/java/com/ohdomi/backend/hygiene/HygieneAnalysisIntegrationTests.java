@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.List;
 import java.util.Map;
+import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,16 +36,26 @@ class HygieneAnalysisIntegrationTests {
     HygieneAiClient hygieneAi;
 
     @Test
-    void checklistIsExposedToReactWithCamelCaseFields() throws Exception {
-        when(hygieneAi.checklist()).thenReturn(List.of(new HygieneAiClient.ChecklistItem(
-                "item_01", "홀", "천장", "천장 청결 상태 확인", "visual", 2, false)));
+    void allChecklistItemsAreExposedToReactWithoutMergingDuplicateShootingNames() throws Exception {
+        List<HygieneAiClient.ChecklistItem> checklist = IntStream.rangeClosed(1, 39)
+                .mapToObj(number -> new HygieneAiClient.ChecklistItem(
+                        "item_%02d".formatted(number),
+                        number == 32 ? "조리장" : "홀",
+                        number == 1 || number == 32 ? "천장" : "촬영 항목 " + number,
+                        "점검 기준 " + number,
+                        "visual", 2, false))
+                .toList();
+        when(hygieneAi.checklist()).thenReturn(checklist);
 
         mockMvc.perform(get("/api/hygiene-inspections/check-items"))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(39))
                 .andExpect(jsonPath("$[0].itemId").value("item_01"))
+                .andExpect(jsonPath("$[0].zone").value("홀"))
                 .andExpect(jsonPath("$[0].shootingItem").value("천장"))
-                .andExpect(jsonPath("$[0].aiCheckPoint").value("천장 청결 상태 확인"))
-                .andExpect(jsonPath("$[0].item_id").doesNotExist());
+                .andExpect(jsonPath("$[31].itemId").value("item_32"))
+                .andExpect(jsonPath("$[31].zone").value("조리장"))
+                .andExpect(jsonPath("$[31].shootingItem").value("천장"));
     }
 
     @Test

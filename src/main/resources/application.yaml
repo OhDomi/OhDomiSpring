@@ -15,6 +15,9 @@ spring:
     init:
       mode: always
       encoding: UTF-8
+      schema-locations:
+        - classpath:schema.sql
+        - classpath:schema-mysql-migrations.sql
 
   jpa:
     hibernate:
